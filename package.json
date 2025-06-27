@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "discord.js": "^14.x.x",
-    "dotenv": "^16.x.x"
+    "dompurify": "^3.2.6",
+    "dotenv": "^16.x.x",
+    "jsdom": "^26.1.0"
   },
   "engines": {
     "node": ">=18.0.0"
