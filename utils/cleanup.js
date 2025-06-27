@@ -5,9 +5,8 @@ const window = new JSDOM('').window;
 const dompurify = DOMPurify(window);
 
 function cleanUsername(username, userId) {
-    const base = username.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10);
-    const idPart = userId.slice(-6);
-    return `${base}-${idPart}`;
+    // Just clean the username without adding user ID
+    return username.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 15) || 'user';
 }
 
 function safeHtml(unsafe) {

@@ -10,8 +10,38 @@ function setupMessageHandler(client) {
         if (message.author.bot) return;
 
         if (message.content === '!setup-tickets') {
-            // Implementation from original code
-            // (Would include the ticket setup logic here)
+            try {
+                const embed = new EmbedBuilder()
+                    .setTitle('🎫 Create a Support Ticket')
+                    .setDescription('Select the type of ticket you\'d like to create from the dropdown below.')
+                    .setColor(0x5865F2)
+                    .setFooter({ text: 'Please select the appropriate category for your inquiry.' });
+
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('ticket_select')
+                    .setPlaceholder('Choose a ticket type...')
+                    .addOptions(
+                        Object.entries(TICKET_TYPES).map(([key, type]) =>
+                            new StringSelectMenuOptionBuilder()
+                                .setLabel(type.name)
+                                .setDescription(type.description)
+                                .setValue(key)
+                                .setEmoji(type.emoji)
+                        )
+                    );
+
+                const row = new ActionRowBuilder().addComponents(selectMenu);
+
+                await message.channel.send({
+                    embeds: [embed],
+                    components: [row]
+                });
+
+                await message.delete().catch(() => {});
+            } catch (error) {
+                console.error('Error setting up ticket system:', error);
+                await message.reply('❌ Failed to setup ticket system. Please check bot permissions.');
+            }
         }
     });
 
@@ -22,6 +52,8 @@ function setupMessageHandler(client) {
         if (configErrors.length > 0) {
             console.error('Configuration errors:', configErrors);
             process.exit(1);
+        } else {
+            console.log('✅ Configuration validated successfully!');
         }
     });
 }
