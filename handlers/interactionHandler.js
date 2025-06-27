@@ -122,6 +122,12 @@ function setupInteractionHandler(client) {
                             });
                         }
 
+                        // Store the initiator of the close action
+                        ticketService.ticketMetadata.set(interaction.channel.id, {
+                            closeInitiator: interaction.user.id,
+                            ticketCreatorId: ticketUserId
+                        });
+
                         const confirmEmbed = new EmbedBuilder()
                             .setTitle('🔒 Close Ticket')
                             .setDescription('Are you sure you want to close this ticket?')
@@ -140,21 +146,50 @@ function setupInteractionHandler(client) {
                         const confirmRow = new ActionRowBuilder()
                             .addComponents(confirmButton, cancelButton);
 
-                        await interaction.reply({
+                        // Send as regular message in channel
+                        const confirmationMessage = await interaction.channel.send({
                             embeds: [confirmEmbed],
-                            components: [confirmRow],
-                            ephemeral: true
+                            components: [confirmRow]
                         });
+
+                        // Store the confirmation message ID
+                        ticketService.ticketMetadata.set(interaction.channel.id, {
+                            ...ticketService.ticketMetadata.get(interaction.channel.id),
+                            confirmationMessageId: confirmationMessage.id
+                        });
+
+                        await interaction.deferUpdate();
                         break;
                     }
 
                     case 'confirm_close_ticket': {
+                        const metadata = ticketService.ticketMetadata.get(interaction.channel.id);
+                        const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
+                        const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
+
+                        // Verify this is the original user who initiated the close or a staff member
+                        if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
+                            return interaction.reply({
+                                content: '❌ Only the user who initiated this action can confirm it.',
+                                ephemeral: true
+                            });
+                        }
+
                         await interaction.deferUpdate();
 
                         const timer = ticketService.ticketCleanupTimers.get(interaction.channel.id);
                         if (timer) {
                             clearTimeout(timer);
                             ticketService.ticketCleanupTimers.delete(interaction.channel.id);
+                        }
+
+                        // Remove creator's permissions only after confirmation
+                        if (metadata?.ticketCreatorId) {
+                            await interaction.channel.permissionOverwrites.edit(metadata.ticketCreatorId, {
+                                ViewChannel: false,
+                                SendMessages: false,
+                                AddReactions: false
+                            }).catch(console.error);
                         }
 
                         const ticketClosedEmbed = new EmbedBuilder()
@@ -183,40 +218,45 @@ function setupInteractionHandler(client) {
                         const controlsRow = new ActionRowBuilder()
                             .addComponents(transcriptButton, openButton, deleteButton);
 
-                        await interaction.editReply({
+                        // Send as regular message in channel
+                        await interaction.channel.send({
                             content: 'Support team ticket controls',
                             embeds: [ticketClosedEmbed],
                             components: [controlsRow]
                         });
 
-                        const channelPermissions = interaction.channel.permissionOverwrites.cache;
-                        let ticketUserId = null;
-
-                        for (const [id, overwrite] of channelPermissions) {
-                            if (overwrite.type === 1 && id !== interaction.guild.id) {
-                                const member = interaction.guild.members.cache.get(id);
-                                if (member && !member.roles.cache.some(role => role.name === CONFIG.STAFF_ROLE_NAME)) {
-                                    ticketUserId = id;
-                                    break;
-                                }
+                        // Delete the confirmation message
+                        if (metadata?.confirmationMessageId) {
+                            const confirmationMessage = await interaction.channel.messages.fetch(metadata.confirmationMessageId).catch(() => null);
+                            if (confirmationMessage) {
+                                await confirmationMessage.delete().catch(console.error);
                             }
-                        }
-
-                        if (ticketUserId) {
-                            await interaction.channel.permissionOverwrites.edit(ticketUserId, {
-                                ViewChannel: true,
-                                SendMessages: false,
-                                AddReactions: false
-                            }).catch(console.error);
                         }
                         break;
                     }
 
                     case 'cancel_close_ticket': {
-                        await interaction.update({
-                            content: '✅ Ticket closure cancelled.',
-                            components: [],
-                            embeds: []
+                        const metadata = ticketService.ticketMetadata.get(interaction.channel.id);
+                        const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
+                        const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
+
+                        // Verify this is the original user who initiated the close or a staff member
+                        if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
+                            return interaction.reply({
+                                content: '❌ Only the user who initiated this action can cancel it.',
+                                ephemeral: true
+                            });
+                        }
+
+                        await interaction.deferUpdate();
+                        if (metadata?.confirmationMessageId) {
+                            const confirmationMessage = await interaction.channel.messages.fetch(metadata.confirmationMessageId).catch(() => null);
+                            if (confirmationMessage) {
+                                await confirmationMessage.delete().catch(console.error);
+                            }
+                        }
+                        await interaction.channel.send({
+                            content: '✅ Ticket closure cancelled.'
                         });
                         break;
                     }
@@ -282,17 +322,15 @@ function setupInteractionHandler(client) {
                                 const member = interaction.guild.members.cache.get(id);
                                 if (member && !member.roles.cache.some(role => role.name === CONFIG.STAFF_ROLE_NAME)) {
                                     ticketUserId = id;
+                                    // Restore creator's permissions
+                                    await interaction.channel.permissionOverwrites.edit(id, {
+                                        ViewChannel: true,
+                                        SendMessages: true,
+                                        AddReactions: true
+                                    }).catch(console.error);
                                     break;
                                 }
                             }
-                        }
-
-                        if (ticketUserId) {
-                            await interaction.channel.permissionOverwrites.edit(ticketUserId, {
-                                ViewChannel: true,
-                                SendMessages: true,
-                                AddReactions: true
-                            }).catch(console.error);
                         }
 
                         const reopenEmbed = new EmbedBuilder()
@@ -310,11 +348,13 @@ function setupInteractionHandler(client) {
                         const closeRow = new ActionRowBuilder()
                             .addComponents(closeButton);
 
-                        await interaction.update({
-                            content: null,
+                        // Send as regular message in channel
+                        await interaction.channel.send({
                             embeds: [reopenEmbed],
                             components: [closeRow]
                         });
+
+                        await interaction.deferUpdate();
                         break;
                     }
 
