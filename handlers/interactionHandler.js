@@ -1,5 +1,5 @@
 // handlers/interactionHandler.js
-const { Events, PermissionFlagsBits } = require('discord.js');
+const { Events, PermissionFlagsBits, InteractionResponseType, MessageFlags } = require('discord.js');
 const CONFIG = require('../config/config');
 const TicketService = require('../services/ticketService');
 const TranscriptService = require('../services/transcriptService');
@@ -22,25 +22,25 @@ function setupInteractionHandler(client) {
                 if (!ticketConfig) {
                     return await interaction.reply({
                         content: '❌ Invalid ticket type selected.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
 
                 if (ticketService.isUserOnCooldown(interaction.user.id, CONFIG.TICKET_CREATE_COOLDOWN)) {
                     return await interaction.reply({
                         content: '⏰ Please wait before creating another ticket.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
 
                 if (!ticketService.canUserCreateTicket(interaction.user.id, CONFIG.MAX_TICKETS_PER_USER)) {
                     return await interaction.reply({
                         content: `❌ You already have the maximum number of tickets (${CONFIG.MAX_TICKETS_PER_USER}) open.`,
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
 
-                await interaction.deferReply({ ephemeral: true });
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
                 try {
                     const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
@@ -118,7 +118,7 @@ function setupInteractionHandler(client) {
                         if (!isStaff && !isTicketCreator) {
                             return interaction.reply({
                                 content: '❌ You can only close your own tickets or you need to be a staff member.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
@@ -171,7 +171,7 @@ function setupInteractionHandler(client) {
                         if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
                             return interaction.reply({
                                 content: '❌ Only the user who initiated this action can confirm it.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
@@ -244,7 +244,7 @@ function setupInteractionHandler(client) {
                         if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
                             return interaction.reply({
                                 content: '❌ Only the user who initiated this action can cancel it.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
@@ -268,7 +268,7 @@ function setupInteractionHandler(client) {
                         if (!isStaff) {
                             return interaction.reply({
                                 content: '❌ Only staff members can delete tickets.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
@@ -310,7 +310,7 @@ function setupInteractionHandler(client) {
                         if (!isStaff) {
                             return interaction.reply({
                                 content: '❌ Only staff members can reopen tickets.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
@@ -365,13 +365,13 @@ function setupInteractionHandler(client) {
                         if (!isStaff) {
                             return interaction.reply({
                                 content: '❌ Only staff members can generate transcripts.',
-                                ephemeral: true
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
                         await interaction.reply({
                             content: '📄 Generating transcript... Please wait.',
-                            ephemeral: true
+                            flags: MessageFlags.Ephemeral
                         });
 
                         try {
@@ -459,7 +459,7 @@ function setupInteractionHandler(client) {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({
                     content: '❌ An error occurred while processing your request.',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 }).catch(console.error);
             }
         }
