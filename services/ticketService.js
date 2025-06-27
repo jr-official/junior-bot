@@ -2,7 +2,7 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { ChannelType } = require('discord.js');
 const { cleanUsername } = require('../utils/cleanup');
-const { TICKET_TYPES } = require('../data/ticketTypes');
+const TICKET_TYPES = require('../data/ticketTypes');
 const ticketPermissions = require('../utils/permissions');
 
 class TicketService {

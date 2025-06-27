@@ -4,7 +4,7 @@ const CONFIG = require('../config/config');
 const TicketService = require('../services/ticketService');
 const TranscriptService = require('../services/transcriptService');
 const CacheService = require('../services/cacheService');
-const { TICKET_TYPES } = require('../data/ticketTypes');
+const TICKET_TYPES = require('../data/ticketTypes');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 function setupInteractionHandler(client) {

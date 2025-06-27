@@ -3,7 +3,7 @@ const { Events } = require('discord.js');
 const CONFIG = require('../config/config');
 const { validateConfig } = require('../utils/validation');
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
-const { TICKET_TYPES } = require('../data/ticketTypes');
+const TICKET_TYPES = require('../data/ticketTypes');
 
 function setupMessageHandler(client) {
     client.on(Events.MessageCreate, async message => {
