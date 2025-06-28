@@ -1,11 +1,9 @@
-// handlers/interactionHandler.js
-const { Events, PermissionFlagsBits, InteractionResponseType, MessageFlags } = require('discord.js');
+const { Events, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const CONFIG = require('../config/config');
 const TicketService = require('../services/ticketService');
 const TranscriptService = require('../services/transcriptService');
 const CacheService = require('../services/cacheService');
 const TICKET_TYPES = require('../data/ticketTypes');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { cleanUsername } = require('../utils/cleanup');
 
 function setupInteractionHandler(client) {

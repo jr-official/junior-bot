@@ -37,7 +37,7 @@ function setupMessageHandler(client) {
                     components: [row]
                 });
 
-                await message.delete().catch(() => {});
+                await message.delete().catch(() => { });
             } catch (error) {
                 console.error('Error setting up ticket system:', error);
                 await message.reply('❌ Failed to setup ticket system. Please check bot permissions.');
@@ -47,7 +47,7 @@ function setupMessageHandler(client) {
 
     client.once(Events.ClientReady, readyClient => {
         console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-        
+
         const configErrors = validateConfig(CONFIG);
         if (configErrors.length > 0) {
             console.error('Configuration errors:', configErrors);

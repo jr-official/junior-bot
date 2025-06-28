@@ -56,7 +56,7 @@ class TicketService {
     async createTicketChannel(guild, ticketType, user, ticketCategoryId, staffRole) {
         const cleanedUsername = cleanUsername(user.username, user.id);
         const channelName = `${ticketType}-${cleanedUsername}`;
-        
+
         return guild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,

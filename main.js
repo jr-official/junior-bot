@@ -2,9 +2,9 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 require('dotenv').config();
 
-// Import handlers
-const { setupMessageHandler } = require('./handlers/messageHandler');
-const { setupInteractionHandler } = require('./handlers/interactionHandler');
+// Import features
+const ticketsFeature = require('./features/tickets/tickets');
+// const moderationFeature = require('./features/moderation/moderation');
 
 // Create client
 const client = new Client({
@@ -16,11 +16,11 @@ const client = new Client({
     ]
 });
 
-// Setup handlers
-setupMessageHandler(client);
-setupInteractionHandler(client);
+// Initialize features
+ticketsFeature(client);
+// moderationFeature(client);
 
-// Error handling
+// Global error handling
 client.on('warn', warning => console.warn('Discord client warning:', warning));
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
