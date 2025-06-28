@@ -11,39 +11,126 @@ function setupInteractionHandler(client) {
     const transcriptService = new TranscriptService(TICKET_TYPES);
     const cacheService = new CacheService();
 
+    // Helper function to safely handle interactions
+    async function safeInteractionResponse(interaction, responseFunction) {
+        try {
+            // Check if interaction is still valid
+            if (!interaction.isRepliable()) {
+                console.log('Interaction is no longer repliable');
+                return false;
+            }
+
+            // Check if already handled
+            if (interaction.replied || interaction.deferred) {
+                console.log('Interaction already handled');
+                return false;
+            }
+
+            await responseFunction();
+            return true;
+        } catch (error) {
+            if (error.code === 10062) {
+                console.log('Interaction expired, cannot respond');
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    // Helper function to safely defer interactions
+    async function safeDeferInteraction(interaction, isUpdate = false) {
+        try {
+            if (interaction.replied || interaction.deferred) {
+                return true;
+            }
+
+            if (isUpdate) {
+                await interaction.deferUpdate();
+            } else {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            }
+            return true;
+        } catch (error) {
+            if (error.code === 10062) {
+                console.log('Interaction expired before deferral');
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    // Helper function to safely reply to interactions
+    async function safeReply(interaction, options) {
+        try {
+            if (interaction.deferred) {
+                return await interaction.editReply(options);
+            } else if (!interaction.replied) {
+                return await interaction.reply(options);
+            } else {
+                return await interaction.followUp(options);
+            }
+        } catch (error) {
+            if (error.code === 10062) {
+                console.log('Interaction expired, cannot respond');
+                return null;
+            }
+            throw error;
+        }
+    }
+
     client.on(Events.InteractionCreate, async interaction => {
         try {
+            // Set up timeout to ensure we respond within 3 seconds
+            const timeout = setTimeout(async () => {
+                if (!interaction.replied && !interaction.deferred) {
+                    try {
+                        if (interaction.isButton()) {
+                            await interaction.deferUpdate();
+                        } else {
+                            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+                        }
+                    } catch (error) {
+                        // Ignore timeout errors
+                    }
+                }
+            }, 2500);
+
             if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
+                const success = await safeDeferInteraction(interaction);
+                if (!success) {
+                    clearTimeout(timeout);
+                    return;
+                }
+
                 const ticketType = interaction.values[0];
                 const ticketConfig = TICKET_TYPES[ticketType];
 
                 if (!ticketConfig) {
-                    return await interaction.reply({
-                        content: '❌ Invalid ticket type selected.',
-                        flags: MessageFlags.Ephemeral
+                    clearTimeout(timeout);
+                    return await safeReply(interaction, {
+                        content: '❌ Invalid ticket type selected.'
                     });
                 }
 
                 if (ticketService.isUserOnCooldown(interaction.user.id, CONFIG.TICKET_CREATE_COOLDOWN)) {
-                    return await interaction.reply({
-                        content: '⏰ Please wait before creating another ticket.',
-                        flags: MessageFlags.Ephemeral
+                    clearTimeout(timeout);
+                    return await safeReply(interaction, {
+                        content: '⏰ Please wait before creating another ticket.'
                     });
                 }
 
                 if (!ticketService.canUserCreateTicket(interaction.user.id, CONFIG.MAX_TICKETS_PER_USER)) {
-                    return await interaction.reply({
-                        content: `❌ You already have the maximum number of tickets (${CONFIG.MAX_TICKETS_PER_USER}) open.`,
-                        flags: MessageFlags.Ephemeral
+                    clearTimeout(timeout);
+                    return await safeReply(interaction, {
+                        content: `❌ You already have the maximum number of tickets (${CONFIG.MAX_TICKETS_PER_USER}) open.`
                     });
                 }
-
-                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
                 try {
                     const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
                     if (!staffRole) {
-                        return await interaction.editReply({
+                        clearTimeout(timeout);
+                        return await safeReply(interaction, {
                             content: '❌ Staff role not found. Please contact an administrator.'
                         });
                     }
@@ -80,13 +167,15 @@ function setupInteractionHandler(client) {
                         components: [row]
                     });
 
-                    await interaction.editReply({
+                    clearTimeout(timeout);
+                    await safeReply(interaction, {
                         content: `✅ Your ticket has been created: ${ticketChannel}`
                     });
 
                 } catch (error) {
                     console.error('Error creating ticket:', error);
-                    await interaction.editReply({
+                    clearTimeout(timeout);
+                    await safeReply(interaction, {
                         content: '❌ Failed to create ticket. Please try again or contact an administrator.'
                     });
                 }
@@ -95,6 +184,12 @@ function setupInteractionHandler(client) {
             if (interaction.isButton()) {
                 switch (interaction.customId) {
                     case 'close_ticket': {
+                        const success = await safeDeferInteraction(interaction, true);
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
+
                         const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
@@ -114,7 +209,8 @@ function setupInteractionHandler(client) {
                         const isTicketCreator = ticketUserId === interaction.user.id;
 
                         if (!isStaff && !isTicketCreator) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ You can only close your own tickets or you need to be a staff member.',
                                 flags: MessageFlags.Ephemeral
                             });
@@ -156,24 +252,29 @@ function setupInteractionHandler(client) {
                             confirmationMessageId: confirmationMessage.id
                         });
 
-                        await interaction.deferUpdate();
+                        clearTimeout(timeout);
                         break;
                     }
 
                     case 'confirm_close_ticket': {
+                        const success = await safeDeferInteraction(interaction, true);
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
+
                         const metadata = ticketService.ticketMetadata.get(interaction.channel.id);
                         const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
                         // Verify this is the original user who initiated the close or a staff member
                         if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ Only the user who initiated this action can confirm it.',
                                 flags: MessageFlags.Ephemeral
                             });
                         }
-
-                        await interaction.deferUpdate();
 
                         const timer = ticketService.ticketCleanupTimers.get(interaction.channel.id);
                         if (timer) {
@@ -230,23 +331,31 @@ function setupInteractionHandler(client) {
                                 await confirmationMessage.delete().catch(console.error);
                             }
                         }
+
+                        clearTimeout(timeout);
                         break;
                     }
 
                     case 'cancel_close_ticket': {
+                        const success = await safeDeferInteraction(interaction, true);
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
+
                         const metadata = ticketService.ticketMetadata.get(interaction.channel.id);
                         const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
                         // Verify this is the original user who initiated the close or a staff member
                         if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ Only the user who initiated this action can cancel it.',
                                 flags: MessageFlags.Ephemeral
                             });
                         }
 
-                        await interaction.deferUpdate();
                         if (metadata?.confirmationMessageId) {
                             const confirmationMessage = await interaction.channel.messages.fetch(metadata.confirmationMessageId).catch(() => null);
                             if (confirmationMessage) {
@@ -256,6 +365,8 @@ function setupInteractionHandler(client) {
                         await interaction.channel.send({
                             content: '✅ Ticket closure cancelled.'
                         });
+
+                        clearTimeout(timeout);
                         break;
                     }
 
@@ -264,15 +375,23 @@ function setupInteractionHandler(client) {
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
                         if (!isStaff) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ Only staff members can delete tickets.',
                                 flags: MessageFlags.Ephemeral
                             });
                         }
 
-                        await interaction.reply({
-                            content: `🗑️ Deleting ticket in ${CONFIG.DELETION_DELAY_SECONDS} seconds...`
+                        const success = await safeInteractionResponse(interaction, async () => {
+                            await interaction.reply({
+                                content: `🗑️ Deleting ticket in ${CONFIG.DELETION_DELAY_SECONDS} seconds...`
+                            });
                         });
+
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
 
                         setTimeout(async () => {
                             try {
@@ -298,15 +417,24 @@ function setupInteractionHandler(client) {
                                 console.error('Error deleting ticket channel:', error);
                             }
                         }, CONFIG.DELETION_DELAY_SECONDS * 1000);
+
+                        clearTimeout(timeout);
                         break;
                     }
 
                     case 'open_ticket': {
+                        const success = await safeDeferInteraction(interaction, true);
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
+
                         const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
                         if (!isStaff) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ Only staff members can reopen tickets.',
                                 flags: MessageFlags.Ephemeral
                             });
@@ -352,7 +480,7 @@ function setupInteractionHandler(client) {
                             components: [closeRow]
                         });
 
-                        await interaction.deferUpdate();
+                        clearTimeout(timeout);
                         break;
                     }
 
@@ -361,16 +489,24 @@ function setupInteractionHandler(client) {
                         const isStaff = staffRole && interaction.member.roles.cache.has(staffRole.id);
 
                         if (!isStaff) {
-                            return interaction.reply({
+                            clearTimeout(timeout);
+                            return await safeReply(interaction, {
                                 content: '❌ Only staff members can generate transcripts.',
                                 flags: MessageFlags.Ephemeral
                             });
                         }
 
-                        await interaction.reply({
-                            content: '📄 Generating transcript... Please wait.',
-                            flags: MessageFlags.Ephemeral
+                        const success = await safeInteractionResponse(interaction, async () => {
+                            await interaction.reply({
+                                content: '📄 Generating transcript... Please wait.',
+                                flags: MessageFlags.Ephemeral
+                            });
                         });
+
+                        if (!success) {
+                            clearTimeout(timeout);
+                            return;
+                        }
 
                         try {
                             const channelPermissions = interaction.channel.permissionOverwrites.cache;
@@ -409,7 +545,8 @@ function setupInteractionHandler(client) {
                             );
 
                             if (!transcriptData) {
-                                return interaction.editReply({
+                                clearTimeout(timeout);
+                                return await safeReply(interaction, {
                                     content: '❌ Failed to generate transcript. Please try again.'
                                 });
                             }
@@ -438,27 +575,47 @@ function setupInteractionHandler(client) {
                                 });
                             }
 
-                            await interaction.editReply({
+                            clearTimeout(timeout);
+                            await safeReply(interaction, {
                                 content: '✅ Transcript generated and sent to the logs channel.'
                             });
 
                         } catch (error) {
                             console.error('Error generating transcript:', error);
-                            await interaction.editReply({
+                            clearTimeout(timeout);
+                            await safeReply(interaction, {
                                 content: '❌ An error occurred while generating the transcript.'
                             });
                         }
                         break;
                     }
+                    default:
+                        clearTimeout(timeout);
+                        break;
                 }
             }
+
+            // Clear timeout if we reach the end without issues
+            clearTimeout(timeout);
+
         } catch (error) {
             console.error('Interaction error:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: '❌ An error occurred while processing your request.',
-                    flags: MessageFlags.Ephemeral
-                }).catch(console.error);
+            
+            // Try to respond with error message if we haven't responded yet
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ An error occurred while processing your request.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                } else if (interaction.deferred) {
+                    await interaction.editReply({
+                        content: '❌ An error occurred while processing your request.'
+                    });
+                }
+            } catch (responseError) {
+                // If we can't respond, just log it
+                console.error('Failed to send error response:', responseError);
             }
         }
     });
