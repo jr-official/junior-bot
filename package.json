@@ -1,18 +1,22 @@
 {
-  "name": "junior-bot",
+  "name": "discord-ticket-bot",
   "version": "1.0.0",
+  "description": "Discord ticket system bot with transcript generation",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
     "dev": "nodemon main.js"
   },
   "dependencies": {
-    "discord.js": "^14.x.x",
-    "dompurify": "^3.2.6",
-    "dotenv": "^16.x.x",
-    "jsdom": "^26.1.0"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "dompurify": "^3.0.6",
+    "jsdom": "^23.0.1"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": ["discord", "bot", "tickets", "support"],
+  "author": "Wonders, Co-Founder of JR.",
+  "license": "UNLICENSED"
 }

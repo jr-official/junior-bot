@@ -1,8 +1,5 @@
 // utils/cleanup.js
-const DOMPurify = require('dompurify');
-const { JSDOM } = require('jsdom');
-const window = new JSDOM('').window;
-const dompurify = DOMPurify(window);
+const htmlUtils = require('./htmlUtils');
 
 function cleanUsername(username, userId) {
     // Just clean the username without adding user ID
@@ -10,7 +7,7 @@ function cleanUsername(username, userId) {
 }
 
 function safeHtml(unsafe) {
-    return dompurify.sanitize(unsafe);
+    return htmlUtils.sanitize(unsafe);
 }
 
 module.exports = {

@@ -1,25 +1,13 @@
 // services/transcriptService.js
 const { Buffer } = require('buffer');
 const { EmbedBuilder } = require('discord.js');
-
-// HTML sanitization setup
-const DOMPurify = require('dompurify');
-const { JSDOM } = require('jsdom');
-const window = new JSDOM('').window;
-const dompurify = DOMPurify(window);
+const htmlUtils = require('../utils/htmlUtils');
+const CONFIG = require('../config/config');
 
 class TranscriptService {
     constructor(ticketTypes) {
         this.TICKET_TYPES = ticketTypes;
-        this.ticketMetadata = new Map(); // Initialize metadata map
-        this.RATE_LIMIT_REQUESTS = 5;
-        this.RATE_LIMIT_DELAY_MS = 1000;
-        this.MESSAGE_FETCH_LIMIT = 100;
-        this.WARNING_TIMEOUT_MINUTES = 5;
-    }
-
-    safeHtml(unsafe) {
-        return dompurify.sanitize(unsafe);
+        this.ticketMetadata = new Map();
     }
 
     async generateTranscript(channel, ticketCreator) {
@@ -34,11 +22,11 @@ class TranscriptService {
             let requestCount = 0;
 
             while (true) {
-                if (requestCount > 0 && requestCount % this.RATE_LIMIT_REQUESTS === 0) {
-                    await new Promise(resolve => setTimeout(resolve, this.RATE_LIMIT_DELAY_MS));
+                if (requestCount > 0 && requestCount % CONFIG.RATE_LIMIT_REQUESTS === 0) {
+                    await new Promise(resolve => setTimeout(resolve, CONFIG.RATE_LIMIT_DELAY_MS));
                 }
 
-                const options = { limit: this.MESSAGE_FETCH_LIMIT };
+                const options = { limit: CONFIG.MESSAGE_FETCH_LIMIT };
                 if (lastMessageId) options.before = lastMessageId;
 
                 const batch = await channel.messages.fetch(options).catch(err => {
@@ -71,7 +59,7 @@ class TranscriptService {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Ticket Transcript - ${this.safeHtml(channel.name)}</title>
+    <title>Ticket Transcript - ${htmlUtils.sanitize(channel.name)}</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #36393f; color: #dcddde; margin: 0; padding: 20px; }
         .header { background: #2f3136; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
@@ -103,23 +91,23 @@ class TranscriptService {
         <div class="info-grid">
             <div class="info-item">
                 <div class="info-label">Ticket Owner</div>
-                <div class="info-value">${this.safeHtml(safeCreator.username)}#${this.safeHtml(safeCreator.discriminator)}</div>
+                <div class="info-value">${htmlUtils.sanitize(safeCreator.username)}#${htmlUtils.sanitize(safeCreator.discriminator)}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">Ticket Name</div>
-                <div class="info-value">${this.safeHtml(channel.name)}</div>
+                <div class="info-value">${htmlUtils.sanitize(channel.name)}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">Panel Name</div>
-                <div class="info-value">${this.safeHtml(this.TICKET_TYPES[ticketType]?.name || ticketType)}</div>
+                <div class="info-value">${htmlUtils.sanitize(this.TICKET_TYPES[ticketType]?.name || ticketType)}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">Created At</div>
-                <div class="info-value">${this.safeHtml(createdAt.toLocaleString())}</div>
+                <div class="info-value">${htmlUtils.sanitize(createdAt.toLocaleString())}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">Closed At</div>
-                <div class="info-value">${this.safeHtml(closedAt.toLocaleString())}</div>
+                <div class="info-value">${htmlUtils.sanitize(closedAt.toLocaleString())}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">Total Messages</div>
@@ -138,25 +126,25 @@ class TranscriptService {
 
                 htmlContent += `
         <div class="message">
-            <div class="avatar">${this.safeHtml(avatarInitial)}</div>
+            <div class="avatar">${htmlUtils.sanitize(avatarInitial)}</div>
             <div class="message-content">
                 <div class="message-header">
-                    <span class="username ${isBot ? 'bot-message' : ''}">${this.safeHtml(message.author.username)}${isBot ? ' BOT' : ''}</span>
-                    <span class="timestamp">${this.safeHtml(timestamp)}</span>
+                    <span class="username ${isBot ? 'bot-message' : ''}">${htmlUtils.sanitize(message.author.username)}${isBot ? ' BOT' : ''}</span>
+                    <span class="timestamp">${htmlUtils.sanitize(timestamp)}</span>
                 </div>`;
 
                 if (message.content) {
-                    htmlContent += `<div class="message-text">${this.safeHtml(message.content).replace(/\n/g, '<br>')}</div>`;
+                    htmlContent += `<div class="message-text">${htmlUtils.formatMessage(message.content)}</div>`;
                 }
 
                 if (message.embeds.length > 0) {
                     for (const embed of message.embeds) {
                         htmlContent += `<div class="embed">`;
                         if (embed.title) {
-                            htmlContent += `<div class="embed-title">${this.safeHtml(embed.title)}</div>`;
+                            htmlContent += `<div class="embed-title">${htmlUtils.sanitize(embed.title)}</div>`;
                         }
                         if (embed.description) {
-                            htmlContent += `<div class="embed-description">${this.safeHtml(embed.description).replace(/\n/g, '<br>')}</div>`;
+                            htmlContent += `<div class="embed-description">${htmlUtils.formatMessage(embed.description)}</div>`;
                         }
                         htmlContent += `</div>`;
                     }
@@ -164,7 +152,7 @@ class TranscriptService {
 
                 if (message.attachments.size > 0) {
                     for (const attachment of message.attachments.values()) {
-                        htmlContent += `<div class="attachment">📎 <a href="${this.safeHtml(attachment.url)}" class="attachment-name" target="_blank">${this.safeHtml(attachment.name)}</a></div>`;
+                        htmlContent += `<div class="attachment">📎 <a href="${htmlUtils.sanitize(attachment.url)}" class="attachment-name" target="_blank">${htmlUtils.sanitize(attachment.name)}</a></div>`;
                     }
                 }
 
@@ -190,7 +178,7 @@ class TranscriptService {
 
     async sendTranscriptToLogs(interaction, transcriptData, ticketCreator) {
         try {
-            const logsChannel = interaction.guild.channels.cache.get(interaction.client.config.TICKET_LOGS_CHANNEL_ID);
+            const logsChannel = interaction.guild.channels.cache.get(CONFIG.TICKET_LOGS_CHANNEL_ID);
 
             if (!logsChannel) {
                 return {

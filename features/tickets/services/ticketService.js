@@ -4,6 +4,7 @@ const { ChannelType } = require('discord.js');
 const { cleanUsername } = require('../utils/cleanup');
 const TICKET_TYPES = require('../data/ticketTypes');
 const ticketPermissions = require('../utils/permissions');
+const CONFIG = require('../config/config');
 
 class TicketService {
     constructor() {
@@ -12,6 +13,41 @@ class TicketService {
         this.userCooldowns = new Map();
         this.ticketCleanupTimers = new Map();
         this.ticketCreationLocks = new Map();
+        
+        // Start memory cleanup interval
+        this.startMemoryCleanup();
+    }
+
+    startMemoryCleanup() {
+        setInterval(() => {
+            this.cleanupInactiveData();
+        }, CONFIG.CACHE_CLEANUP_INTERVAL);
+    }
+
+    cleanupInactiveData() {
+        const now = Date.now();
+        
+        // Clean up old cooldowns
+        for (const [userId, timestamp] of this.userCooldowns.entries()) {
+            if (now - timestamp > CONFIG.MAX_INACTIVE_TIME) {
+                this.userCooldowns.delete(userId);
+            }
+        }
+
+        // Clean up old metadata for non-existent channels
+        for (const [channelId, metadata] of this.ticketMetadata.entries()) {
+            if (metadata.lastActivity && now - metadata.lastActivity > CONFIG.MAX_INACTIVE_TIME) {
+                this.ticketMetadata.delete(channelId);
+            }
+        }
+
+        console.log(`Memory cleanup completed. Active tickets: ${this.activeTickets.size}, Metadata: ${this.ticketMetadata.size}, Cooldowns: ${this.userCooldowns.size}`);
+    }
+
+    updateMetadataActivity(channelId) {
+        const metadata = this.ticketMetadata.get(channelId) || {};
+        metadata.lastActivity = Date.now();
+        this.ticketMetadata.set(channelId, metadata);
     }
 
     canUserCreateTicket(userId, maxTickets) {
@@ -23,6 +59,7 @@ class TicketService {
         const userTickets = this.activeTickets.get(userId) || [];
         userTickets.push(channelId);
         this.activeTickets.set(userId, userTickets);
+        this.updateMetadataActivity(channelId);
     }
 
     removeTicketFromTracking(userId, channelId) {
@@ -57,7 +94,7 @@ class TicketService {
         const cleanedUsername = cleanUsername(user.username, user.id);
         const channelName = `${ticketType}-${cleanedUsername}`;
 
-        return guild.channels.create({
+        const channel = await guild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,
             parent: ticketCategoryId,
@@ -76,6 +113,16 @@ class TicketService {
                 }
             ]
         });
+
+        // Store initial metadata
+        this.ticketMetadata.set(channel.id, {
+            type: ticketType,
+            createdAt: Date.now(),
+            creatorId: user.id,
+            lastActivity: Date.now()
+        });
+
+        return channel;
     }
 }
 

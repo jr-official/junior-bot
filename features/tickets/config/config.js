@@ -13,5 +13,8 @@ module.exports = {
     TICKET_CREATE_COOLDOWN: 30000, // 30 seconds
     RATE_LIMIT_REQUESTS: 5,
     RATE_LIMIT_DELAY_MS: 1000,
-    MESSAGE_FETCH_LIMIT: 100
+    MESSAGE_FETCH_LIMIT: 100,
+    // Memory cleanup settings
+    CACHE_CLEANUP_INTERVAL: 3600000, // 1 hour
+    MAX_INACTIVE_TIME: 86400000 // 24 hours
 };
