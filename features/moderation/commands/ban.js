@@ -1,18 +1,18 @@
 // features/moderation/commands/ban.js
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { parseDuration, formatDuration } = require('../utils/durationParser');
-const { 
-    canModerate, 
-    sendDM, 
-    logModeration, 
+const {
+    canModerate,
+    sendDM,
+    logModeration,
     parseMembers,
-    validatePermissions 
+    validatePermissions
 } = require('../utils/moderationUtils');
 
 module.exports = {
     name: 'ban',
     description: 'Ban one or multiple members from the server',
-    
+
     slashCommand: new SlashCommandBuilder()
         .setName('ban')
         .setDescription('Ban management commands')
@@ -58,7 +58,7 @@ module.exports = {
 
     async executeSlash(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        
+
         if (subcommand === 'add') {
             await this.executeBan(interaction, {
                 users: interaction.options.getString('user'),
@@ -96,7 +96,7 @@ module.exports = {
         // Parse flags and collect reason
         for (let i = 1; i < args.length; i++) {
             const arg = args[i];
-            
+
             if (arg.startsWith('--')) {
                 // Handle flags
                 if (arg === '--soft') {
@@ -125,7 +125,7 @@ module.exports = {
         }
 
         options.reason = reasonParts.join(' ');
-        
+
         if (!options.reason) {
             return message.reply('❌ **Usage:** `!ban <user(s)> <reason> [duration] [--soft] [--purge-days=N] [--hack] [--no-dm] [--proof=URL]`');
         }
@@ -209,7 +209,7 @@ module.exports = {
                 // Perform ban
                 await guild.members.ban(target.user, {
                     reason: `${options.reason} | Moderator: ${moderator.user.tag}`,
-                    deleteMessageDays: options.purge_days
+                    deleteMessageSeconds: options.purge_days * 24 * 60 * 60 // Convert days to seconds
                 });
 
                 // Handle soft ban
@@ -251,10 +251,10 @@ module.exports = {
             .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
 
         if (results.successful.length > 0) {
-            const successList = results.successful.map(r => 
+            const successList = results.successful.map(r =>
                 `✅ **${r.user.tag}** (${r.user.id})`
             ).join('\n');
-            
+
             embed.addFields({
                 name: `${options.soft ? 'Soft Banned' : 'Banned'} (${results.successful.length})`,
                 value: successList,
@@ -263,10 +263,10 @@ module.exports = {
         }
 
         if (results.failed.length > 0) {
-            const failedList = results.failed.map(r => 
+            const failedList = results.failed.map(r =>
                 `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`
             ).join('\n');
-            
+
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
                 value: failedList,
@@ -277,7 +277,7 @@ module.exports = {
         // Add details
         const details = [];
         details.push(`**Reason:** ${options.reason}`);
-        if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
+        if (duration) details.push(`**Duration:** ${formatDuration(duration)}`); // Fixed: Use imported function
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
         if (options.proof) details.push(`**Proof:** [View Evidence](${options.proof})`);
 
