@@ -15,10 +15,15 @@ module.exports = (client) => {
 
     // Register slash commands
     client.on(Events.ClientReady, async () => {
-        const commands = [
-            banCommand.slashCommand,
-            unbanCommand.slashCommand
-        ];
+        const commands = [];
+        
+        // Add commands with proper validation
+        if (banCommand.slashCommand) {
+            commands.push(banCommand.slashCommand.toJSON());
+        }
+        if (unbanCommand.slashCommand) {
+            commands.push(unbanCommand.slashCommand.toJSON());
+        }
 
         try {
             console.log('🔨 Registering moderation slash commands...');

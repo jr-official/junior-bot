@@ -1,281 +1,107 @@
-// features/moderation/utils/moderationUtils.js
-const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { validatePermissions, sendDM, logModeration } = require('../utils/moderationUtils');
 
 module.exports = {
-    /**
-     * Check if a moderator can moderate a target member
-     */
-    async canModerate(moderator, target) {
-        try {
-            // Can't moderate yourself
-            if (moderator.id === target.id) {
-                return { success: false, message: "You cannot moderate yourself." };
-            }
+    data: new SlashCommandBuilder()
+        .setName('unban')
+        .setDescription('Unban a user from the server')
+        .addStringOption(option =>
+            option.setName('user')
+                .setDescription('User ID or username to unban')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for the unban')
+                .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
-            // Can't moderate the server owner
-            if (target.id === target.guild.ownerId) {
-                return { success: false, message: "Cannot moderate the server owner." };
-            }
+    async execute(interaction) {
+        const options = {
+            user: interaction.options.getString('user'),
+            reason: interaction.options.getString('reason')
+        };
 
-            // Can't moderate if target has higher or equal role
-            if (moderator.roles.highest.position <= target.roles.highest.position) {
-                return { success: false, message: "You cannot moderate someone with a higher or equal role." };
-            }
-
-            // Can't moderate if bot can't moderate target
-            const botMember = target.guild.members.me;
-            if (botMember.roles.highest.position <= target.roles.highest.position) {
-                return { success: false, message: "I cannot moderate someone with a higher or equal role than me." };
-            }
-
-            return { success: true };
-        } catch (error) {
-            console.error('Error checking moderation permissions:', error);
-            return { success: false, message: "Error checking permissions." };
-        }
+        await this.executeUnban(interaction, options);
     },
 
-    /**
-     * Validate basic permissions for moderation commands
-     */
-    async validatePermissions(member, permission) {
-        try {
-            // Convert string permission to PermissionFlagsBits
-            const permissionFlag = PermissionFlagsBits[permission] || permission;
-            
-            // Check if user has the required permission
-            if (!member.permissions.has(permissionFlag)) {
-                return { success: false, message: "You do not have permission to use this command." };
-            }
-
-            // Check if bot has the required permission
-            const botMember = member.guild.members.me;
-            if (!botMember.permissions.has(permissionFlag)) {
-                return { success: false, message: "I do not have the required permissions to execute this command." };
-            }
-
-            return { success: true };
-        } catch (error) {
-            console.error('Error validating permissions:', error);
-            return { success: false, message: "Error validating permissions." };
+    async executePrefix(message, args) {
+        if (args.length < 2) {
+            return message.reply('❌ **Usage:** `!unban <user> <reason>`');
         }
+
+        const options = {
+            user: args[0],
+            reason: args.slice(1).join(' ')
+        };
+
+        await this.executeUnban(message, options);
     },
 
-    /**
-     * Parse member mentions, IDs, and usernames
-     */
-    async parseMembers(guild, userString, hackBan = false) {
-        try {
-            const userIdentifiers = userString.split(/[,\s]+/).filter(id => id.length > 0);
-            const targets = [];
+    async executeUnban(context, options) {
+        const guild = context.guild;
+        const moderator = context.member;
+        const isInteraction = context.isCommand?.() || context.replied !== undefined;
 
-            for (const identifier of userIdentifiers) {
-                let user = null;
-                let member = null;
-
-                // Try to parse mention
-                const mentionMatch = identifier.match(/^<@!?(\d+)>$/);
-                if (mentionMatch) {
-                    const userId = mentionMatch[1];
-                    try {
-                        member = await guild.members.fetch(userId);
-                        user = member.user;
-                    } catch {
-                        if (hackBan) {
-                            try {
-                                user = await guild.client.users.fetch(userId);
-                            } catch {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                // Try to parse ID
-                else if (/^\d{17,19}$/.test(identifier)) {
-                    try {
-                        member = await guild.members.fetch(identifier);
-                        user = member.user;
-                    } catch {
-                        if (hackBan) {
-                            try {
-                                user = await guild.client.users.fetch(identifier);
-                            } catch {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                // Try to parse username
-                else {
-                    try {
-                        const members = await guild.members.fetch({ query: identifier, limit: 1 });
-                        if (members.size > 0) {
-                            member = members.first();
-                            user = member.user;
-                        } else {
-                            // Fallback to searching all members (less efficient)
-                            const allMembers = await guild.members.fetch();
-                            member = allMembers.find(m => 
-                                m.user.username.toLowerCase() === identifier.toLowerCase() || 
-                                m.user.tag.toLowerCase() === identifier.toLowerCase() ||
-                                m.displayName.toLowerCase() === identifier.toLowerCase()
-                            );
-                            if (member) {
-                                user = member.user;
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error searching for member:', error);
-                        continue;
-                    }
-                }
-
-                if (user) {
-                    targets.push({ user, member });
-                }
-            }
-
-            if (targets.length === 0) {
-                return { success: false, message: "No valid users found." };
-            }
-
-            return { success: true, targets };
-        } catch (error) {
-            console.error('Error parsing members:', error);
-            return { success: false, message: "Error parsing user identifiers." };
+        const permissionCheck = await validatePermissions(moderator, 'BanMembers');
+        if (!permissionCheck.success) {
+            const reply = `❌ ${permissionCheck.message}`;
+            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
         }
-    },
 
-    /**
-     * Send DM to user about moderation action
-     */
-    async sendDM(user, options) {
         try {
-            const embed = new EmbedBuilder()
-                .setTimestamp();
+            const bans = await guild.bans.fetch();
+            let targetUser = null;
 
-            switch (options.type) {
-                case 'ban':
-                    embed.setColor('#ff0000')
-                        .setTitle('🔨 You have been banned')
-                        .setDescription(`You have been banned from **${options.guild}**`)
-                        .addFields(
-                            { name: 'Reason', value: options.reason, inline: false },
-                            { name: 'Moderator', value: options.moderator, inline: true }
-                        );
-                    
-                    if (options.duration) {
-                        embed.addFields({ name: 'Duration', value: options.duration, inline: true });
-                    }
-                    
-                    if (options.proof) {
-                        embed.addFields({ name: 'Evidence', value: `[View Proof](${options.proof})`, inline: false });
-                    }
-                    break;
-
-                case 'unban':
-                    embed.setColor('#00ff00')
-                        .setTitle('🔓 You have been unbanned')
-                        .setDescription(`You have been unbanned from **${options.guild}**`)
-                        .addFields(
-                            { name: 'Reason', value: options.reason, inline: false },
-                            { name: 'Moderator', value: options.moderator, inline: true }
-                        );
-                    break;
+            if (/^\d{17,19}$/.test(options.user)) {
+                const banInfo = bans.get(options.user);
+                targetUser = banInfo?.user;
+            } else {
+                const banInfo = bans.find(ban =>
+                    ban.user.username.toLowerCase() === options.user.toLowerCase() ||
+                    ban.user.tag.toLowerCase() === options.user.toLowerCase()
+                );
+                targetUser = banInfo?.user;
             }
 
-            await user.send({ embeds: [embed] });
-        } catch (error) {
-            console.error(`Failed to send DM to ${user.tag}:`, error);
-            // Don't throw error - DM failure shouldn't stop the moderation action
-        }
-    },
-
-    /**
-     * Log moderation action to a designated channel
-     */
-    async logModeration(guild, action) {
-        try {
-            // Try to find a moderation log channel
-            const logChannel = guild.channels.cache.find(channel => 
-                channel.name.includes('mod-log') || 
-                channel.name.includes('modlog') ||
-                channel.name.includes('audit-log') ||
-                channel.name.includes('logs')
-            );
-
-            if (!logChannel || !logChannel.isTextBased()) {
-                return; // No log channel found
+            if (!targetUser) {
+                const reply = `❌ User not found in ban list.`;
+                return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
             }
+
+            await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderator.user.tag}`);
+
+            await sendDM(targetUser, {
+                type: 'unban',
+                guild: guild.name,
+                reason: options.reason,
+                moderator: moderator.user.tag
+            });
+
+            await logModeration(guild, {
+                type: 'unban',
+                target: targetUser,
+                moderator: moderator.user,
+                reason: options.reason
+            });
 
             const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('🔓 User Unbanned')
+                .addFields(
+                    { name: 'User', value: `${targetUser.tag} (${targetUser.id})`, inline: true },
+                    { name: 'Moderator', value: `${moderator.user.tag}`, inline: true },
+                    { name: 'Reason', value: options.reason, inline: false }
+                )
                 .setTimestamp()
-                .setFooter({ text: `Case ID: ${Date.now().toString(36)}` });
+                .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
 
-            switch (action.type) {
-                case 'ban':
-                    embed.setColor('#ff0000')
-                        .setTitle('🔨 Member Banned')
-                        .addFields(
-                            { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                            { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                            { name: 'Reason', value: action.reason, inline: false }
-                        );
-                    
-                    if (action.duration) {
-                        embed.addFields({ name: 'Duration', value: action.duration, inline: true });
-                    }
-                    
-                    if (action.expiresAt) {
-                        embed.addFields({ name: 'Expires', value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`, inline: true });
-                    }
-                    
-                    if (action.purge_days > 0) {
-                        embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
-                    }
-                    
-                    if (action.proof) {
-                        embed.addFields({ name: 'Evidence', value: `[View Proof](${action.proof})`, inline: false });
-                    }
-                    break;
+            const reply = { embeds: [embed] };
+            return isInteraction ? context.reply(reply) : context.reply(reply);
 
-                case 'softban':
-                    embed.setColor('#ff9500')
-                        .setTitle('🔨 Member Soft Banned')
-                        .addFields(
-                            { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                            { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                            { name: 'Reason', value: action.reason, inline: false }
-                        );
-                    
-                    if (action.purge_days > 0) {
-                        embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
-                    }
-                    
-                    if (action.proof) {
-                        embed.addFields({ name: 'Evidence', value: `[View Proof](${action.proof})`, inline: false });
-                    }
-                    break;
-
-                case 'unban':
-                    embed.setColor('#00ff00')
-                        .setTitle('🔓 Member Unbanned')
-                        .addFields(
-                            { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                            { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                            { name: 'Reason', value: action.reason, inline: false }
-                        );
-                    break;
-            }
-
-            await logChannel.send({ embeds: [embed] });
         } catch (error) {
-            console.error('Failed to log moderation action:', error);
-            // Don't throw error - logging failure shouldn't stop the moderation action
+            console.error('Failed to unban user:', error);
+            const reply = `❌ Failed to unban user: ${error.message}`;
+            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
         }
     }
 };
