@@ -6,139 +6,89 @@ const TIME_UNITS = {
     h: 60 * 60 * 1000,
     d: 24 * 60 * 60 * 1000,
     w: 7 * 24 * 60 * 60 * 1000,
-    M: 30 * 24 * 60 * 60 * 1000, // Month (30 days)
-    y: 365 * 24 * 60 * 60 * 1000 // Year (365 days)
+    M: 30 * 24 * 60 * 60 * 1000,
+    y: 365 * 24 * 60 * 60 * 1000
 };
 
-module.exports = {
-    /**
-     * Parse duration string into milliseconds
-     * @param {string} duration - Duration string like "1d", "2w", "1h30m", "permanent"
-     * @returns {Object} - { success: boolean, duration: string, ms: number|null }
-     */
-    parseDuration(duration) {
-        if (!duration) {
-            return { success: false, message: "No duration provided" };
+function formatDuration(duration) {
+    if (!duration) return 'Unknown';
+    const durationStr = duration.toLowerCase().trim();
+
+    if (['permanent', 'perm', 'forever'].includes(durationStr)) return 'Permanent';
+
+    const regex = /(\d+)([smhdwMy])/g;
+    let match;
+    const parts = [];
+
+    while ((match = regex.exec(durationStr)) !== null) {
+        const [, amount, unit] = match;
+        const value = parseInt(amount);
+
+        const unitNames = {
+            s: value === 1 ? 'second' : 'seconds',
+            m: value === 1 ? 'minute' : 'minutes',
+            h: value === 1 ? 'hour' : 'hours',
+            d: value === 1 ? 'day' : 'days',
+            w: value === 1 ? 'week' : 'weeks',
+            M: value === 1 ? 'month' : 'months',
+            y: value === 1 ? 'year' : 'years'
+        };
+
+        if (unitNames[unit]) {
+            parts.push(`${value} ${unitNames[unit]}`);
         }
+    }
+
+    if (parts.length === 0) return duration;
+    if (parts.length === 1) return parts[0];
+    if (parts.length === 2) return parts.join(' and ');
+    const lastPart = parts.pop();
+    return parts.join(', ') + ', and ' + lastPart;
+}
+
+module.exports = {
+    parseDuration(duration) {
+        if (!duration) return { success: false, message: "No duration provided" };
 
         const durationStr = duration.toLowerCase().trim();
-
-        // Handle permanent bans
-        if (durationStr === 'permanent' || durationStr === 'perm' || durationStr === 'forever') {
+        if (['permanent', 'perm', 'forever'].includes(durationStr)) {
             return { success: true, duration: 'Permanent', ms: null };
         }
 
-        // Parse duration components
         const regex = /(\d+)([smhdwMy])/g;
-        let match;
-        let totalMs = 0;
-        let parts = [];
+        let match, totalMs = 0, parts = [];
 
         while ((match = regex.exec(durationStr)) !== null) {
             const [, amount, unit] = match;
             const value = parseInt(amount);
-            
-            if (isNaN(value) || value <= 0) {
-                return { success: false, message: "Invalid duration amount" };
-            }
-
-            if (!TIME_UNITS[unit]) {
-                return { success: false, message: `Invalid time unit: ${unit}` };
-            }
-
+            if (isNaN(value) || value <= 0) return { success: false, message: "Invalid duration amount" };
+            if (!TIME_UNITS[unit]) return { success: false, message: `Invalid time unit: ${unit}` };
             totalMs += value * TIME_UNITS[unit];
             parts.push(`${value}${unit}`);
         }
 
-        if (totalMs === 0) {
-            return { success: false, message: "No valid duration found" };
-        }
+        if (totalMs === 0) return { success: false, message: "No valid duration found" };
+        if (totalMs > TIME_UNITS.y) return { success: false, message: "Duration cannot exceed 1 year" };
 
-        // Check if duration is too long (max 1 year)
-        const maxDuration = 365 * 24 * 60 * 60 * 1000; // 1 year
-        if (totalMs > maxDuration) {
-            return { success: false, message: "Duration cannot exceed 1 year" };
-        }
-
-        // Format the duration nicely
-        const formattedDuration = this.formatDuration(parts.join(''));
-
-        return { 
-            success: true, 
-            duration: formattedDuration, 
-            ms: totalMs 
+        return {
+            success: true,
+            duration: formatDuration(parts.join('')),
+            ms: totalMs
         };
     },
 
-    /**
-     * Format duration string to human readable format
-     * @param {string} duration - Duration string like "1d2h30m"
-     * @returns {string} - Formatted duration like "1 day, 2 hours, 30 minutes"
-     */
-    formatDuration(duration) {
-        if (!duration) return 'Unknown';
+    formatDuration,
 
-        const durationStr = duration.toLowerCase().trim();
-
-        // Handle permanent
-        if (durationStr === 'permanent' || durationStr === 'perm' || durationStr === 'forever') {
-            return 'Permanent';
-        }
-
-        const regex = /(\d+)([smhdwMy])/g;
-        let match;
-        const parts = [];
-
-        while ((match = regex.exec(durationStr)) !== null) {
-            const [, amount, unit] = match;
-            const value = parseInt(amount);
-            
-            const unitNames = {
-                s: value === 1 ? 'second' : 'seconds',
-                m: value === 1 ? 'minute' : 'minutes',
-                h: value === 1 ? 'hour' : 'hours',
-                d: value === 1 ? 'day' : 'days',
-                w: value === 1 ? 'week' : 'weeks',
-                M: value === 1 ? 'month' : 'months',
-                y: value === 1 ? 'year' : 'years'
-            };
-
-            if (unitNames[unit]) {
-                parts.push(`${value} ${unitNames[unit]}`);
-            }
-        }
-
-        if (parts.length === 0) {
-            return duration;
-        }
-
-        // Join parts with commas and "and" for the last part
-        if (parts.length === 1) {
-            return parts[0];
-        } else if (parts.length === 2) {
-            return parts.join(' and ');
-        } else {
-            const lastPart = parts.pop();
-            return parts.join(', ') + ', and ' + lastPart;
-        }
-    },
-
-    /**
-     * Format milliseconds to human readable duration
-     * @param {number} ms - Milliseconds
-     * @returns {string} - Formatted duration
-     */
     formatMilliseconds(ms) {
         if (!ms || ms <= 0) return 'Unknown';
-
         const units = [
-            { name: 'year', value: 365 * 24 * 60 * 60 * 1000 },
-            { name: 'month', value: 30 * 24 * 60 * 60 * 1000 },
-            { name: 'week', value: 7 * 24 * 60 * 60 * 1000 },
-            { name: 'day', value: 24 * 60 * 60 * 1000 },
-            { name: 'hour', value: 60 * 60 * 1000 },
-            { name: 'minute', value: 60 * 1000 },
-            { name: 'second', value: 1000 }
+            { name: 'year', value: TIME_UNITS.y },
+            { name: 'month', value: TIME_UNITS.M },
+            { name: 'week', value: TIME_UNITS.w },
+            { name: 'day', value: TIME_UNITS.d },
+            { name: 'hour', value: TIME_UNITS.h },
+            { name: 'minute', value: TIME_UNITS.m },
+            { name: 'second', value: TIME_UNITS.s }
         ];
 
         const parts = [];
@@ -152,15 +102,9 @@ module.exports = {
             }
         }
 
-        if (parts.length === 0) {
-            return 'Less than a second';
-        } else if (parts.length === 1) {
-            return parts[0];
-        } else if (parts.length === 2) {
-            return parts.join(' and ');
-        } else {
-            const lastPart = parts.pop();
-            return parts.join(', ') + ', and ' + lastPart;
-        }
+        if (parts.length === 0) return 'Less than a second';
+        if (parts.length === 1) return parts[0];
+        const last = parts.pop();
+        return parts.join(', ') + ', and ' + last;
     }
 };

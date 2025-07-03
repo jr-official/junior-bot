@@ -1,9 +1,6 @@
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
 module.exports = {
-    /**
-     * Check if a moderator can moderate a target member
-     */
     async canModerate(moderator, target) {
         try {
             if (moderator.id === target.id) {
@@ -30,9 +27,6 @@ module.exports = {
         }
     },
 
-    /**
-     * Validate basic permissions for moderation commands
-     */
     async validatePermissions(member, permission) {
         try {
             const permissionFlag = PermissionFlagsBits[permission] || permission;
@@ -53,9 +47,6 @@ module.exports = {
         }
     },
 
-    /**
-     * Send DM to user about moderation action
-     */
     async sendDM(user, options) {
         try {
             const embed = new EmbedBuilder().setTimestamp();
@@ -94,9 +85,6 @@ module.exports = {
         }
     },
 
-    /**
-     * Log moderation action to a designated channel
-     */
     async logModeration(guild, action) {
         try {
             const logChannel = guild.channels.cache.find(channel =>
@@ -166,5 +154,41 @@ module.exports = {
         } catch (error) {
             console.error('Failed to log moderation action:', error);
         }
+    },
+
+    async parseMembers(guild, input, allowHackBan = false) {
+        const ids = input.split(/[\s,]+/).filter(Boolean);
+        if (!ids.length) return { success: false, message: "No users provided", targets: [] };
+
+        const targets = [];
+
+        for (const idOrTag of ids) {
+            try {
+                let user = null;
+                let member = null;
+
+                if (/^\d{17,19}$/.test(idOrTag)) {
+                    user = await guild.client.users.fetch(idOrTag);
+                    member = await guild.members.fetch(idOrTag).catch(() => null);
+                } else if (idOrTag.match(/^<@!?(\d+)>$/)) {
+                    const id = idOrTag.match(/^<@!?(\d+)>$/)[1];
+                    user = await guild.client.users.fetch(id);
+                    member = await guild.members.fetch(id).catch(() => null);
+                } else {
+                    return { success: false, message: `Invalid user format: ${idOrTag}` };
+                }
+
+                if (!user) throw new Error("User not found");
+                if (!member && !allowHackBan) {
+                    return { success: false, message: `${user.tag} is not in the server.` };
+                }
+
+                targets.push({ user, member });
+            } catch (error) {
+                return { success: false, message: `Failed to resolve user: ${idOrTag}` };
+            }
+        }
+
+        return { success: true, targets };
     }
 };

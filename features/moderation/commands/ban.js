@@ -1,5 +1,6 @@
 // features/moderation/commands/ban.js
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { MessageFlags } = require('discord-api-types/v10');
 const { parseDuration, formatDuration } = require('../utils/durationParser');
 const {
     canModerate,
@@ -67,70 +68,10 @@ module.exports = {
                 soft: interaction.options.getBoolean('soft') || false,
                 purge_days: interaction.options.getInteger('purge_days') || 0,
                 hack: interaction.options.getBoolean('hack') || false,
-                dm: interaction.options.getBoolean('dm') !== false, // Default true
+                dm: interaction.options.getBoolean('dm') !== false,
                 proof: interaction.options.getString('proof')
             });
         }
-    },
-
-    async executePrefix(message, args) {
-        if (args.length < 2) {
-            return message.reply('❌ **Usage:** `!ban <user(s)> <reason> [duration] [--soft] [--purge-days=N] [--hack] [--no-dm] [--proof=URL]`');
-        }
-
-        // Parse arguments
-        const options = {
-            users: args[0],
-            reason: '',
-            duration: null,
-            soft: false,
-            purge_days: 0,
-            hack: false,
-            dm: true,
-            proof: null
-        };
-
-        let reasonIndex = 1;
-        let reasonParts = [];
-
-        // Parse flags and collect reason
-        for (let i = 1; i < args.length; i++) {
-            const arg = args[i];
-
-            if (arg.startsWith('--')) {
-                // Handle flags
-                if (arg === '--soft') {
-                    options.soft = true;
-                } else if (arg === '--hack') {
-                    options.hack = true;
-                } else if (arg === '--no-dm') {
-                    options.dm = false;
-                } else if (arg.startsWith('--purge-days=')) {
-                    const days = parseInt(arg.split('=')[1]);
-                    if (!isNaN(days) && days >= 0 && days <= 7) {
-                        options.purge_days = days;
-                    }
-                } else if (arg.startsWith('--proof=')) {
-                    options.proof = arg.split('=')[1];
-                }
-            } else {
-                // Check if it's a duration (contains time units)
-                if (i === reasonIndex && /^(\d+[smhdwmy])+$/i.test(arg)) {
-                    options.duration = arg;
-                    reasonIndex++;
-                } else {
-                    reasonParts.push(arg);
-                }
-            }
-        }
-
-        options.reason = reasonParts.join(' ');
-
-        if (!options.reason) {
-            return message.reply('❌ **Usage:** `!ban <user(s)> <reason> [duration] [--soft] [--purge-days=N] [--hack] [--no-dm] [--proof=URL]`');
-        }
-
-        await this.executeBan(message, options);
     },
 
     async executeBan(context, options) {
@@ -138,14 +79,13 @@ module.exports = {
         const moderator = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
-        // Validate permissions
         const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
         if (!permissionCheck.success) {
             const reply = `❌ ${permissionCheck.message}`;
-            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
-        // Parse duration
         let duration = null;
         let durationMs = null;
         let expiresAt = null;
@@ -154,47 +94,38 @@ module.exports = {
             const parsed = parseDuration(options.duration);
             if (!parsed.success) {
                 const reply = `❌ Invalid duration format. Use formats like: 1d, 1w, 1m, permanent`;
-                return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+                const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+                return isInteraction ? context.reply(replyObj) : context.reply(reply);
             }
             duration = parsed.duration;
             durationMs = parsed.ms;
             expiresAt = parsed.ms ? new Date(Date.now() + parsed.ms) : null;
         }
 
-        // Parse members
         const memberResult = await parseMembers(guild, options.users, options.hack);
         if (!memberResult.success) {
             const reply = `❌ ${memberResult.message}`;
-            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
         const targets = memberResult.targets;
-        const results = {
-            successful: [],
-            failed: []
-        };
+        const results = { successful: [], failed: [] };
 
-        // Defer reply for interactions
         if (isInteraction) {
             await context.deferReply();
         }
 
-        // Process each target
         for (const target of targets) {
             try {
-                // Check if we can moderate this user
                 if (target.member) {
                     const canMod = await canModerate(moderator, target.member);
                     if (!canMod.success) {
-                        results.failed.push({
-                            user: target.user,
-                            reason: canMod.message
-                        });
+                        results.failed.push({ user: target.user, reason: canMod.message });
                         continue;
                     }
                 }
 
-                // Send DM before ban
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'ban',
@@ -206,23 +137,17 @@ module.exports = {
                     });
                 }
 
-                // Perform ban
                 await guild.members.ban(target.user, {
                     reason: `${options.reason} | Moderator: ${moderator.user.tag}`,
-                    deleteMessageSeconds: options.purge_days * 24 * 60 * 60 // Convert days to seconds
+                    deleteMessageSeconds: options.purge_days * 24 * 60 * 60
                 });
 
-                // Handle soft ban
                 if (options.soft) {
                     await guild.members.unban(target.user, `Soft ban completed | Moderator: ${moderator.user.tag}`);
                 }
 
-                results.successful.push({
-                    user: target.user,
-                    member: target.member
-                });
+                results.successful.push({ user: target.user, member: target.member });
 
-                // Log moderation action
                 await logModeration(guild, {
                     type: options.soft ? 'softban' : 'ban',
                     target: target.user,
@@ -233,17 +158,12 @@ module.exports = {
                     proof: options.proof,
                     purge_days: options.purge_days
                 });
-
             } catch (error) {
                 console.error(`Failed to ban ${target.user?.tag || target.id}:`, error);
-                results.failed.push({
-                    user: target.user,
-                    reason: error.message
-                });
+                results.failed.push({ user: target.user, reason: error.message });
             }
         }
 
-        // Create response embed
         const embed = new EmbedBuilder()
             .setColor(options.soft ? '#ff9500' : '#ff0000')
             .setTitle(options.soft ? '🔨 Soft Ban Results' : '🔨 Ban Results')
@@ -251,41 +171,27 @@ module.exports = {
             .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
 
         if (results.successful.length > 0) {
-            const successList = results.successful.map(r =>
-                `✅ **${r.user.tag}** (${r.user.id})`
-            ).join('\n');
-
             embed.addFields({
                 name: `${options.soft ? 'Soft Banned' : 'Banned'} (${results.successful.length})`,
-                value: successList,
+                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id})`).join('\n'),
                 inline: false
             });
         }
 
         if (results.failed.length > 0) {
-            const failedList = results.failed.map(r =>
-                `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`
-            ).join('\n');
-
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
-                value: failedList,
+                value: results.failed.map(r => `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`).join('\n'),
                 inline: false
             });
         }
 
-        // Add details
-        const details = [];
-        details.push(`**Reason:** ${options.reason}`);
-        if (duration) details.push(`**Duration:** ${formatDuration(duration)}`); // Fixed: Use imported function
+        const details = [`**Reason:** ${options.reason}`];
+        if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
         if (options.proof) details.push(`**Proof:** [View Evidence](${options.proof})`);
 
-        embed.addFields({
-            name: 'Details',
-            value: details.join('\n'),
-            inline: false
-        });
+        embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
