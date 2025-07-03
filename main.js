@@ -7,7 +7,7 @@ const databaseService = require('./features/tickets/services/databaseService');
 
 // Import features
 const ticketsFeature = require('./features/tickets/tickets');
-// const moderationFeature = require('./features/moderation/moderation');
+const moderationFeature = require('./features/moderation/moderation');
 
 // Create client
 const client = new Client({
@@ -15,7 +15,8 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildBans // Add this for ban events
     ]
 });
 
@@ -27,7 +28,7 @@ async function initializeBot() {
         
         // Initialize features after database connection
         ticketsFeature(client);
-        // moderationFeature(client);
+        moderationFeature(client);
         
         console.log('🤖 Bot features initialized');
     } catch (error) {
