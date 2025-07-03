@@ -17,16 +17,22 @@ module.exports = (client) => {
     client.on(Events.ClientReady, async () => {
         const commands = [];
         
-        // Add commands with proper validation
+        // Add commands with proper validation - handles both 'slashCommand' and 'data' properties
         if (banCommand.slashCommand) {
             commands.push(banCommand.slashCommand.toJSON());
         }
+        
+        // Fixed: Check for both 'slashCommand' and 'data' properties
         if (unbanCommand.slashCommand) {
             commands.push(unbanCommand.slashCommand.toJSON());
+        } else if (unbanCommand.data) {
+            commands.push(unbanCommand.data.toJSON());
         }
 
         try {
             console.log('🔨 Registering moderation slash commands...');
+            console.log(`📋 Commands to register: ${commands.map(cmd => cmd.name).join(', ')}`);
+            
             await client.application.commands.set(commands);
             console.log('✅ Moderation slash commands registered successfully');
         } catch (error) {

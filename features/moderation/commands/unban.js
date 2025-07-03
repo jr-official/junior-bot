@@ -1,8 +1,13 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { MessageFlags } = require('discord-api-types/v10');
 const { validatePermissions, sendDM, logModeration } = require('../utils/moderationUtils');
 
 module.exports = {
-    data: new SlashCommandBuilder()
+    name: 'unban',
+    description: 'Unban a user from the server',
+
+    // Changed from 'data' to 'slashCommand' to match your ban.js structure
+    slashCommand: new SlashCommandBuilder()
         .setName('unban')
         .setDescription('Unban a user from the server')
         .addStringOption(option =>
@@ -15,7 +20,8 @@ module.exports = {
                 .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
-    async execute(interaction) {
+    // Changed from 'execute' to 'executeSlash' to match your structure
+    async executeSlash(interaction) {
         const options = {
             user: interaction.options.getString('user'),
             reason: interaction.options.getString('reason')
@@ -40,22 +46,26 @@ module.exports = {
     async executeUnban(context, options) {
         const guild = context.guild;
         const moderator = context.member;
-        const isInteraction = context.isCommand?.() || context.replied !== undefined;
+        const isInteraction = context.replied !== undefined;
 
-        const permissionCheck = await validatePermissions(moderator, 'BanMembers');
+        // Fixed permission check to match your handlers (BAN_MEMBERS instead of BanMembers)
+        const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
         if (!permissionCheck.success) {
             const reply = `❌ ${permissionCheck.message}`;
-            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
         try {
             const bans = await guild.bans.fetch();
             let targetUser = null;
 
+            // Check if input is a user ID (17-19 digits)
             if (/^\d{17,19}$/.test(options.user)) {
                 const banInfo = bans.get(options.user);
                 targetUser = banInfo?.user;
             } else {
+                // Search by username or tag
                 const banInfo = bans.find(ban =>
                     ban.user.username.toLowerCase() === options.user.toLowerCase() ||
                     ban.user.tag.toLowerCase() === options.user.toLowerCase()
@@ -65,11 +75,14 @@ module.exports = {
 
             if (!targetUser) {
                 const reply = `❌ User not found in ban list.`;
-                return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+                const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+                return isInteraction ? context.reply(replyObj) : context.reply(reply);
             }
 
+            // Unban the user
             await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderator.user.tag}`);
 
+            // Send DM to user
             await sendDM(targetUser, {
                 type: 'unban',
                 guild: guild.name,
@@ -77,6 +90,7 @@ module.exports = {
                 moderator: moderator.user.tag
             });
 
+            // Log the moderation action
             await logModeration(guild, {
                 type: 'unban',
                 target: targetUser,
@@ -84,6 +98,7 @@ module.exports = {
                 reason: options.reason
             });
 
+            // Create success embed
             const embed = new EmbedBuilder()
                 .setColor('#00ff00')
                 .setTitle('🔓 User Unbanned')
@@ -101,7 +116,8 @@ module.exports = {
         } catch (error) {
             console.error('Failed to unban user:', error);
             const reply = `❌ Failed to unban user: ${error.message}`;
-            return isInteraction ? context.reply({ content: reply, ephemeral: true }) : context.reply(reply);
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
     }
 };
