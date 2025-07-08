@@ -8,6 +8,7 @@ const databaseService = require('./features/tickets/services/databaseService');
 // Import features
 const ticketsFeature = require('./features/tickets/tickets');
 const moderationFeature = require('./features/moderation/moderation');
+const rolesFeature = require('./features/roles/roles');
 
 // Create client
 const client = new Client({
@@ -29,6 +30,7 @@ async function initializeBot() {
         // Initialize features after database connection
         ticketsFeature(client);
         moderationFeature(client);
+        rolesFeature(client);
         
         console.log('🤖 Bot features initialized');
     } catch (error) {
