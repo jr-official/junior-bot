@@ -59,7 +59,7 @@ module.exports = {
             }
         ]
     },
-    
+
     interest: {
         title: "Interest Roles",
         color: 0x00FF7F, // Spring green color
@@ -118,7 +118,7 @@ module.exports = {
             }
         ]
     },
-    
+
     ping: {
         title: "Ping Roles",
         color: 0xFF4500, // Orange red color
