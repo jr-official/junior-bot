@@ -1,9 +1,20 @@
 // services/databaseService.js
 const { MongoClient } = require('mongodb');
-require('dotenv').config();
+
+// Only load .env in development
+if (process.env.NODE_ENV !== 'production') {
+    require('dotenv').config();
+}
 
 class DatabaseService {
     constructor() {
+        // Check if MongoDB URI is available
+        if (!process.env.MONGODB_URI) {
+            console.error('❌ MONGODB_URI environment variable is not set!');
+            console.error('Please set your MongoDB connection string in Railway variables');
+            process.exit(1);
+        }
+        
         this.client = new MongoClient(process.env.MONGODB_URI);
         this.db = null;
         this.isConnected = false;
@@ -11,6 +22,7 @@ class DatabaseService {
 
     async connect() {
         try {
+            console.log('🔗 Attempting to connect to MongoDB...');
             await this.client.connect();
             this.db = this.client.db('junior-bot'); // Your database name
             this.isConnected = true;
@@ -20,7 +32,9 @@ class DatabaseService {
             await this.createIndexes();
         } catch (error) {
             console.error('❌ MongoDB connection error:', error);
+            console.error('Connection string preview:', process.env.MONGODB_URI ? 'mongodb://***:***@***' : 'NOT SET');
             this.isConnected = false;
+            throw error; // Re-throw to handle in main.js
         }
     }
 
