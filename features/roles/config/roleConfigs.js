@@ -6,6 +6,7 @@ module.exports = {
         color: 0x5037CF, // Purple color (#5037cf)
         description: "Select your location to connect with other members from your region!",
         placeholder: "Where in the world are you from?",
+        multiSelect: false, // Single selection only
         options: [
             {
                 label: "Global",
@@ -65,15 +66,8 @@ module.exports = {
         color: 0x00FF7F, // Spring green color
         description: "Pick topics you're into",
         placeholder: "What are you interested in?",
+        multiSelect: true, // Allow multiple selections
         options: [
-            {
-                label: "None",
-                value: "none",
-                description: "Remove all interest roles",
-                emoji: { name: "❌" },
-                default: true
-                // No roleId - this option just removes other roles
-            },
             {
                 label: "Programming",
                 value: "programming",
@@ -124,15 +118,8 @@ module.exports = {
         color: 0xFF4500, // Orange red color
         description: "Choose what pings you want to receive!",
         placeholder: "What would you like to be pinged for?",
+        multiSelect: true, // Allow multiple selections
         options: [
-            {
-                label: "None",
-                value: "none",
-                description: "Remove all ping roles",
-                emoji: { name: "🔕" },
-                default: true
-                // No roleId - this option just removes other roles
-            },
             {
                 label: "Announcements",
                 value: "announcements",
