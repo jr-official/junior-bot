@@ -13,7 +13,7 @@ const CATEGORY_IMAGES = {
 };
 
 // Helper function to create select menu
-function createSelectMenu(roleType, config, selectedValues = []) {
+function createSelectMenu(roleType, config) {
     const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(`role_select_${roleType}`)
         .setPlaceholder(config.placeholder)
@@ -24,7 +24,8 @@ function createSelectMenu(roleType, config, selectedValues = []) {
             value: option.value,
             description: option.description,
             emoji: option.emoji,
-            default: config.multiSelect ? selectedValues.includes(option.value) : (option.default || false)
+            // Only set default for single-select location roles, not for multi-select
+            default: !config.multiSelect && (option.default || false)
         })));
 
     return selectMenu;
@@ -125,6 +126,8 @@ module.exports = (client) => {
             }
 
             try {
+                await interaction.deferReply({ ephemeral: true });
+                
                 const selectedValues = interaction.values;
                 const member = interaction.member;
                 const guild = interaction.guild;
@@ -156,10 +159,6 @@ module.exports = (client) => {
                         await member.roles.add(rolesToAdd);
                     }
 
-                    // Update the dropdown to show current selections
-                    const updatedSelectMenu = createSelectMenu(roleType, config, selectedValues);
-                    const updatedRow = new ActionRowBuilder().addComponents(updatedSelectMenu);
-
                     // Send feedback message
                     let feedbackContent;
                     if (selectedOptions.length > 0) {
@@ -169,13 +168,8 @@ module.exports = (client) => {
                         feedbackContent = `✅ Successfully removed all ${config.title.toLowerCase()}!`;
                     }
 
-                    await interaction.update({
-                        components: [updatedRow]
-                    });
-
-                    await interaction.followUp({
-                        content: feedbackContent,
-                        ephemeral: true
+                    await interaction.editReply({
+                        content: feedbackContent
                     });
 
                     console.log(`🎭 ${member.user.tag} updated ${roleType} roles: ${selectedOptions.map(opt => opt.label).join(', ')}`);
@@ -185,9 +179,8 @@ module.exports = (client) => {
                     const selectedOption = config.options.find(opt => opt.value === selectedValue);
 
                     if (!selectedOption) {
-                        return interaction.reply({
-                            content: '❌ Invalid selection.',
-                            ephemeral: true
+                        return interaction.editReply({
+                            content: '❌ Invalid selection.'
                         });
                     }
 
@@ -195,17 +188,8 @@ module.exports = (client) => {
                     if (selectedOption.roleId && currentRoles.has(selectedOption.roleId)) {
                         await member.roles.remove(selectedOption.roleId);
 
-                        // Reset dropdown to default (Global)
-                        const updatedSelectMenu = createSelectMenu(roleType, config);
-                        const updatedRow = new ActionRowBuilder().addComponents(updatedSelectMenu);
-
-                        await interaction.update({
-                            components: [updatedRow]
-                        });
-
-                        await interaction.followUp({
-                            content: `✅ Successfully removed the **${selectedOption.label}** role!`,
-                            ephemeral: true
+                        await interaction.editReply({
+                            content: `✅ Successfully removed the **${selectedOption.label}** role!`
                         });
 
                         console.log(`🎭 ${member.user.tag} removed "${selectedOption.label}" role for ${roleType}`);
@@ -222,25 +206,15 @@ module.exports = (client) => {
                         const roleToAdd = guild.roles.cache.get(selectedOption.roleId);
 
                         if (!roleToAdd) {
-                            return interaction.reply({
-                                content: '❌ The selected role could not be found.',
-                                ephemeral: true
+                            return interaction.editReply({
+                                content: '❌ The selected role could not be found.'
                             });
                         }
 
                         await member.roles.add(roleToAdd);
 
-                        // Keep the dropdown showing the selected option
-                        const updatedSelectMenu = createSelectMenu(roleType, config, [selectedValue]);
-                        const updatedRow = new ActionRowBuilder().addComponents(updatedSelectMenu);
-
-                        await interaction.update({
-                            components: [updatedRow]
-                        });
-
-                        await interaction.followUp({
-                            content: `✅ Successfully assigned you the **${selectedOption.label}** role!`,
-                            ephemeral: true
+                        await interaction.editReply({
+                            content: `✅ Successfully assigned you the **${selectedOption.label}** role!`
                         });
                     } else {
                         // Handle Global option - remove all location roles
@@ -248,17 +222,8 @@ module.exports = (client) => {
                             await member.roles.remove(currentRoles);
                         }
 
-                        // Reset dropdown to default (Global)
-                        const updatedSelectMenu = createSelectMenu(roleType, config);
-                        const updatedRow = new ActionRowBuilder().addComponents(updatedSelectMenu);
-
-                        await interaction.update({
-                            components: [updatedRow]
-                        });
-
-                        await interaction.followUp({
-                            content: `✅ Successfully updated your ${config.title.toLowerCase()} preference to **${selectedOption.label}**!`,
-                            ephemeral: true
+                        await interaction.editReply({
+                            content: `✅ Successfully updated your ${config.title.toLowerCase()} preference to **${selectedOption.label}**!`
                         });
                     }
 
@@ -266,9 +231,8 @@ module.exports = (client) => {
                 }
             } catch (error) {
                 console.error('❌ Error handling role selection:', error);
-                await interaction.reply({
-                    content: '❌ There was an error updating your roles.',
-                    ephemeral: true
+                await interaction.editReply({
+                    content: '❌ There was an error updating your roles.'
                 });
             }
         }
