@@ -7,7 +7,8 @@ const {
     sendDM,
     logModeration,
     parseMembers,
-    validatePermissions
+    validatePermissions,
+    handleProofData
 } = require('../utils/moderationUtils');
 
 module.exports = {
@@ -52,8 +53,12 @@ module.exports = {
                         .setDescription('Send DM to user about ban')
                         .setRequired(false))
                 .addStringOption(option =>
-                    option.setName('proof')
+                    option.setName('proof_url')
                         .setDescription('Evidence/proof URL')
+                        .setRequired(false))
+                .addAttachmentOption(option =>
+                    option.setName('proof_file')
+                        .setDescription('Upload proof file (image/document)')
                         .setRequired(false)))
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
@@ -69,7 +74,8 @@ module.exports = {
                 purge_days: interaction.options.getInteger('purge_days') || 0,
                 hack: interaction.options.getBoolean('hack') || false,
                 dm: interaction.options.getBoolean('dm') !== false,
-                proof: interaction.options.getString('proof')
+                proof_url: interaction.options.getString('proof_url'),
+                proof_file: interaction.options.getAttachment('proof_file')
             });
         }
     },
@@ -82,6 +88,14 @@ module.exports = {
         const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
         if (!permissionCheck.success) {
             const reply = `❌ ${permissionCheck.message}`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        // Handle proof data
+        const proofData = await handleProofData(options.proof_url, options.proof_file);
+        if (proofData.error) {
+            const reply = `❌ Proof validation failed: ${proofData.error}`;
             const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
@@ -133,7 +147,7 @@ module.exports = {
                         reason: options.reason,
                         duration: duration,
                         moderator: moderator.user.username,
-                        proof: options.proof
+                        proof: proofData.data
                     });
                 }
 
@@ -155,7 +169,7 @@ module.exports = {
                     reason: options.reason,
                     duration: duration,
                     expiresAt: expiresAt,
-                    proof: options.proof,
+                    proof: proofData.data,
                     purge_days: options.purge_days
                 });
             } catch (error) {
@@ -189,11 +203,43 @@ module.exports = {
         const details = [`**Reason:** ${options.reason}`];
         if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
-        if (options.proof) details.push(`**Proof:** [View Evidence](${options.proof})`);
+        
+        // Enhanced proof display
+        if (proofData.data) {
+            const proofDisplay = formatProofDisplay(proofData.data);
+            details.push(`**Proof:** ${proofDisplay}`);
+        }
 
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
+
+        // Add proof image if it's an image attachment
+        if (proofData.data && proofData.data.type === 'file' && proofData.data.isImage) {
+            embed.setImage(proofData.data.url);
+        }
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
     }
 };
+
+// Helper function to format proof display
+function formatProofDisplay(proofData) {
+    if (!proofData) return 'None';
+    
+    if (proofData.type === 'file') {
+        const emoji = proofData.isImage ? '🖼️' : '📄';
+        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
+    } else if (proofData.type === 'url') {
+        return `🔗 [View Evidence](${proofData.url})`;
+    }
+    
+    return 'None';
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
