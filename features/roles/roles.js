@@ -118,15 +118,13 @@ client.on('interactionCreate', async (interaction) => {
         const roleType = interaction.customId.replace('role_select_', '');
         const config = roleConfigs[roleType];
 
-        if (!config) {
-            return interaction.reply({
-                content: '❌ Invalid role configuration.',
-                ephemeral: true
-            });
-        }
+return interaction.reply({
+    content: '❌ Invalid role configuration.',
+    flags: ['Ephemeral']
+});
 
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: ['Ephemeral'] });
             
             const selectedValues = interaction.values;
             const member = interaction.member;

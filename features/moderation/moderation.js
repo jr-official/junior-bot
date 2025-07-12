@@ -52,10 +52,10 @@ module.exports = (client) => {
         } catch (error) {
             console.error('❌ Error handling slash command:', error);
             
-            const errorMessage = { 
-                content: '❌ An error occurred while executing this command.', 
-                ephemeral: true 
-            };
+const errorMessage = { 
+    content: '❌ An error occurred while executing this command.', 
+    flags: ['Ephemeral']
+};
             
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp(errorMessage);
