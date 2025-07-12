@@ -110,133 +110,142 @@ module.exports = (client) => {
         }
     });
 
-    // Handle dropdown selections
-    client.on('interactionCreate', async (interaction) => {
-        if (!interaction.isStringSelectMenu()) return;
+// Handle dropdown selections
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isStringSelectMenu()) return;
 
-        if (interaction.customId.startsWith('role_select_')) {
-            const roleType = interaction.customId.replace('role_select_', '');
-            const config = roleConfigs[roleType];
+    if (interaction.customId.startsWith('role_select_')) {
+        const roleType = interaction.customId.replace('role_select_', '');
+        const config = roleConfigs[roleType];
 
-            if (!config) {
-                return interaction.reply({
-                    content: '❌ Invalid role configuration.',
-                    ephemeral: true
-                });
-            }
+        if (!config) {
+            return interaction.reply({
+                content: '❌ Invalid role configuration.',
+                ephemeral: true
+            });
+        }
 
-            try {
-                await interaction.deferReply({ ephemeral: true });
-                
-                const selectedValues = interaction.values;
-                const member = interaction.member;
-                const guild = interaction.guild;
+        try {
+            await interaction.deferReply({ ephemeral: true });
+            
+            const selectedValues = interaction.values;
+            const member = interaction.member;
+            const guild = interaction.guild;
 
-                // Get all role IDs for this category
-                const allRoleIds = config.options
-                    .filter(opt => opt.roleId)
-                    .map(opt => opt.roleId);
+            // Get all role IDs for this category
+            const allRoleIds = config.options
+                .filter(opt => opt.roleId)
+                .map(opt => opt.roleId);
 
-                // Get current roles from this category
-                const currentRoles = member.roles.cache.filter(role =>
-                    allRoleIds.includes(role.id)
+            // Get current roles from this category
+            const currentRoles = member.roles.cache.filter(role =>
+                allRoleIds.includes(role.id)
+            );
+
+            if (config.multiSelect) {
+                // Handle multiple selection categories (interest and ping)
+                const selectedOptions = config.options.filter(opt =>
+                    selectedValues.includes(opt.value) && opt.roleId
                 );
 
-                if (config.multiSelect) {
-                    // Handle multiple selection categories (interest and ping)
-                    const selectedOptions = config.options.filter(opt =>
-                        selectedValues.includes(opt.value) && opt.roleId
-                    );
+                // Get currently selected role IDs
+                const selectedRoleIds = selectedOptions.map(opt => opt.roleId);
 
-                    // Remove all current roles from this category
+                // Remove roles that are no longer selected
+                const rolesToRemove = currentRoles.filter(role => 
+                    !selectedRoleIds.includes(role.id)
+                );
+                if (rolesToRemove.size > 0) {
+                    await member.roles.remove(rolesToRemove);
+                }
+
+                // Add roles that are newly selected
+                const currentRoleIds = currentRoles.map(role => role.id);
+                const rolesToAdd = selectedRoleIds.filter(roleId => 
+                    !currentRoleIds.includes(roleId)
+                );
+                if (rolesToAdd.length > 0) {
+                    await member.roles.add(rolesToAdd);
+                }
+
+                // Send feedback message
+                let feedbackContent;
+                if (selectedOptions.length > 0) {
+                    const roleNames = selectedOptions.map(opt => opt.label).join(', ');
+                    feedbackContent = `✅ Successfully updated your ${config.title.toLowerCase()}! You now have: **${roleNames}**`;
+                } else {
+                    feedbackContent = `✅ Successfully removed all ${config.title.toLowerCase()}!`;
+                }
+
+                await interaction.editReply({
+                    content: feedbackContent
+                });
+
+                console.log(`🎭 ${member.user.tag} updated ${roleType} roles: ${selectedOptions.map(opt => opt.label).join(', ')}`);
+            } else {
+                // Handle single selection categories (location)
+                const selectedValue = selectedValues[0];
+                const selectedOption = config.options.find(opt => opt.value === selectedValue);
+
+                if (!selectedOption) {
+                    return interaction.editReply({
+                        content: '❌ Invalid selection.'
+                    });
+                }
+
+                // If selecting a role they already have, remove it and reset to default
+                if (selectedOption.roleId && currentRoles.has(selectedOption.roleId)) {
+                    await member.roles.remove(selectedOption.roleId);
+
+                    await interaction.editReply({
+                        content: `✅ Successfully removed the **${selectedOption.label}** role!`
+                    });
+
+                    console.log(`🎭 ${member.user.tag} removed "${selectedOption.label}" role for ${roleType}`);
+                    return;
+                }
+
+                // Remove existing roles from this category
+                if (selectedOption.roleId && currentRoles.size > 0) {
+                    await member.roles.remove(currentRoles);
+                }
+
+                // Add the selected role (if it has a roleId)
+                if (selectedOption.roleId) {
+                    const roleToAdd = guild.roles.cache.get(selectedOption.roleId);
+
+                    if (!roleToAdd) {
+                        return interaction.editReply({
+                            content: '❌ The selected role could not be found.'
+                        });
+                    }
+
+                    await member.roles.add(roleToAdd);
+
+                    await interaction.editReply({
+                        content: `✅ Successfully assigned you the **${selectedOption.label}** role!`
+                    });
+                } else {
+                    // Handle Global option - remove all location roles
                     if (currentRoles.size > 0) {
                         await member.roles.remove(currentRoles);
                     }
 
-                    // Add selected roles
-                    if (selectedOptions.length > 0) {
-                        const rolesToAdd = selectedOptions.map(opt => opt.roleId);
-                        await member.roles.add(rolesToAdd);
-                    }
-
-                    // Send feedback message
-                    let feedbackContent;
-                    if (selectedOptions.length > 0) {
-                        const roleNames = selectedOptions.map(opt => opt.label).join(', ');
-                        feedbackContent = `✅ Successfully updated your ${config.title.toLowerCase()}! You now have: **${roleNames}**`;
-                    } else {
-                        feedbackContent = `✅ Successfully removed all ${config.title.toLowerCase()}!`;
-                    }
-
                     await interaction.editReply({
-                        content: feedbackContent
+                        content: `✅ Successfully updated your ${config.title.toLowerCase()} preference to **${selectedOption.label}**!`
                     });
-
-                    console.log(`🎭 ${member.user.tag} updated ${roleType} roles: ${selectedOptions.map(opt => opt.label).join(', ')}`);
-                } else {
-                    // Handle single selection categories (location)
-                    const selectedValue = selectedValues[0];
-                    const selectedOption = config.options.find(opt => opt.value === selectedValue);
-
-                    if (!selectedOption) {
-                        return interaction.editReply({
-                            content: '❌ Invalid selection.'
-                        });
-                    }
-
-                    // If selecting a role they already have, remove it and reset to default
-                    if (selectedOption.roleId && currentRoles.has(selectedOption.roleId)) {
-                        await member.roles.remove(selectedOption.roleId);
-
-                        await interaction.editReply({
-                            content: `✅ Successfully removed the **${selectedOption.label}** role!`
-                        });
-
-                        console.log(`🎭 ${member.user.tag} removed "${selectedOption.label}" role for ${roleType}`);
-                        return;
-                    }
-
-                    // Remove existing roles from this category
-                    if (selectedOption.roleId && currentRoles.size > 0) {
-                        await member.roles.remove(currentRoles);
-                    }
-
-                    // Add the selected role (if it has a roleId)
-                    if (selectedOption.roleId) {
-                        const roleToAdd = guild.roles.cache.get(selectedOption.roleId);
-
-                        if (!roleToAdd) {
-                            return interaction.editReply({
-                                content: '❌ The selected role could not be found.'
-                            });
-                        }
-
-                        await member.roles.add(roleToAdd);
-
-                        await interaction.editReply({
-                            content: `✅ Successfully assigned you the **${selectedOption.label}** role!`
-                        });
-                    } else {
-                        // Handle Global option - remove all location roles
-                        if (currentRoles.size > 0) {
-                            await member.roles.remove(currentRoles);
-                        }
-
-                        await interaction.editReply({
-                            content: `✅ Successfully updated your ${config.title.toLowerCase()} preference to **${selectedOption.label}**!`
-                        });
-                    }
-
-                    console.log(`🎭 ${member.user.tag} selected "${selectedOption.label}" for ${roleType}`);
                 }
-            } catch (error) {
-                console.error('❌ Error handling role selection:', error);
-                await interaction.editReply({
-                    content: '❌ There was an error updating your roles.'
-                });
+
+                console.log(`🎭 ${member.user.tag} selected "${selectedOption.label}" for ${roleType}`);
             }
+        } catch (error) {
+            console.error('❌ Error handling role selection:', error);
+            await interaction.editReply({
+                content: '❌ There was an error updating your roles.'
+            });
         }
-    });
+    }
+});
 
     console.log('🎭 Roles feature loaded');
 };
