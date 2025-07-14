@@ -245,5 +245,5 @@ return interaction.reply({
     }
 });
 
-    console.log('🎭 Roles feature loaded');
+    console.log('🎭 Roles feature loaded!');
 };
