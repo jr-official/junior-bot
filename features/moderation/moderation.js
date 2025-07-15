@@ -13,26 +13,30 @@ module.exports = (client) => {
     client.moderationCommands.set('ban', banCommand);
     client.moderationCommands.set('unban', unbanCommand);
 
+    // Variable to track if commands have been registered
+    let commandsRegistered = false;
+
     // Register slash commands
     client.on(Events.ClientReady, async () => {
-        const commands = [];
-        
-        // Add commands with proper validation - handles both 'slashCommand' and 'data' properties
-        if (banCommand.slashCommand) {
-            commands.push(banCommand.slashCommand.toJSON());
-        }
-        
-        // Fixed: Check for both 'slashCommand' and 'data' properties
-        if (unbanCommand.slashCommand) {
-            commands.push(unbanCommand.slashCommand.toJSON());
-        } else if (unbanCommand.data) {
-            commands.push(unbanCommand.data.toJSON());
-        }
+        // Only register commands once
+        if (commandsRegistered) return;
+        commandsRegistered = true;
 
         try {
             console.log('🔨 Registering moderation slash commands...');
-            console.log(`📋 Commands to register: ${commands.map(cmd => cmd.name).join(', ')}`);
             
+            // Create an array of commands to register
+            const commands = [];
+            
+            if (banCommand.slashCommand) {
+                commands.push(banCommand.slashCommand.toJSON());
+            }
+            
+            if (unbanCommand.slashCommand) {
+                commands.push(unbanCommand.slashCommand.toJSON());
+            }
+
+            // Bulk set all commands at once
             await client.application.commands.set(commands);
             console.log('✅ Moderation slash commands registered successfully');
         } catch (error) {
@@ -51,11 +55,10 @@ module.exports = (client) => {
             await slashCommandHandler.handle(interaction, command);
         } catch (error) {
             console.error('❌ Error handling slash command:', error);
-            
-const errorMessage = { 
-    content: '❌ An error occurred while executing this command.', 
-    flags: ['Ephemeral']
-};
+            const errorMessage = { 
+                content: '❌ An error occurred while executing this command.', 
+                ephemeral: true
+            };
             
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp(errorMessage);
