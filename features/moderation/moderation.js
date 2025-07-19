@@ -16,14 +16,14 @@ module.exports = (client) => {
     // Variable to track if commands have been registered
     let commandsRegistered = false;
 
-    // Register slash commands
+    // Register slash commands GLOBALLY
     client.on(Events.ClientReady, async () => {
         // Only register commands once
         if (commandsRegistered) return;
         commandsRegistered = true;
 
         try {
-            console.log('🔨 Registering moderation slash commands...');
+            console.log('🔨 Registering moderation slash commands globally...');
             
             // Create an array of commands to register
             const commands = [];
@@ -36,9 +36,21 @@ module.exports = (client) => {
                 commands.push(unbanCommand.slashCommand.toJSON());
             }
 
-            // Bulk set all commands at once
+            // Clear any existing guild commands first to prevent duplicates
+            const guilds = client.guilds.cache;
+            for (const [guildId, guild] of guilds) {
+                try {
+                    await guild.commands.set([]); // Clear guild commands
+                    console.log(`Cleared guild commands for ${guild.name}`);
+                } catch (error) {
+                    console.error(`Failed to clear commands for guild ${guild.name}:`, error);
+                }
+            }
+
+            // Register commands globally
             await client.application.commands.set(commands);
-            console.log('✅ Moderation slash commands registered successfully');
+            console.log('✅ Moderation slash commands registered globally');
+            console.log('📝 Note: Global commands may take up to 1 hour to appear in all servers');
         } catch (error) {
             console.error('❌ Failed to register moderation slash commands:', error);
         }

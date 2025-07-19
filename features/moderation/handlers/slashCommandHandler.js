@@ -1,4 +1,6 @@
 // features/moderation/handlers/slashCommandHandler.js
+const { PermissionFlagsBits } = require('discord.js');
+
 module.exports = {
     async handle(interaction, command) {
         // Check if user has permission to use moderation commands
