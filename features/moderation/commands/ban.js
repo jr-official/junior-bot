@@ -14,6 +14,7 @@ const {
 module.exports = {
     name: 'ban',
     description: 'Ban one or multiple members from the server',
+    permission: 'BAN_MEMBERS', // Permission identifier for handlers
 
     slashCommand: new SlashCommandBuilder()
         .setName('ban')
@@ -72,17 +73,71 @@ module.exports = {
         });
     },
 
+    async executePrefix(message, args) {
+        if (args.length < 2) {
+            return message.reply('❌ **Usage:** `!ban <user> <reason> [options]`\n' +
+                '**Options:**\n' +
+                '`--soft` - Soft ban (delete messages then unban)\n' +
+                '`--hack` - Force ban user not in server\n' +
+                '`--no-dm` - Don\'t send DM to user\n' +
+                '`--purge=<days>` - Days of messages to delete (0-7)\n' +
+                '`--duration=<time>` - Ban duration (e.g., 1d, 1w, 1m)\n' +
+                '`--proof=<url>` - Evidence URL\n' +
+                '**Example:** `!ban @user spam --soft --purge=7 --duration=1d`');
+        }
+
+        const options = {
+            users: args[0],
+            reason: '',
+            duration: null,
+            soft: false,
+            purge_days: 0,
+            hack: false,
+            dm: true,
+            proof_url: null,
+            proof_file: null
+        };
+
+        // Parse flags and reason
+        let reasonParts = [];
+        for (let i = 1; i < args.length; i++) {
+            const arg = args[i];
+            
+            if (arg === '--soft') {
+                options.soft = true;
+            } else if (arg === '--hack') {
+                options.hack = true;
+            } else if (arg === '--no-dm') {
+                options.dm = false;
+            } else if (arg.startsWith('--purge=')) {
+                const days = parseInt(arg.split('=')[1]);
+                if (days >= 0 && days <= 7) {
+                    options.purge_days = days;
+                } else {
+                    return message.reply('❌ **Error:** Purge days must be between 0 and 7.');
+                }
+            } else if (arg.startsWith('--duration=')) {
+                options.duration = arg.split('=')[1];
+            } else if (arg.startsWith('--proof=')) {
+                options.proof_url = arg.split('=')[1];
+            } else {
+                reasonParts.push(arg);
+            }
+        }
+
+        options.reason = reasonParts.join(' ');
+
+        if (!options.reason) {
+            return message.reply('❌ **Error:** Reason is required.');
+        }
+
+        await this.executeBan(message, options);
+    },
+
     async executeBan(context, options) {
         const guild = context.guild;
         const moderator = context.member || context.author;
         const isInteraction = context.replied !== undefined;
-
-        const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
-        if (!permissionCheck.success) {
-            const reply = `❌ ${permissionCheck.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
-        }
 
         // Handle proof data
         const proofData = await handleProofData(options.proof_url, options.proof_file);
@@ -196,7 +251,6 @@ module.exports = {
         if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
         
-        // Enhanced proof display
         if (proofData.data) {
             const proofDisplay = formatProofDisplay(proofData.data);
             details.push(`**Proof:** ${proofDisplay}`);
@@ -204,7 +258,6 @@ module.exports = {
 
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
-        // Add proof image if it's an image attachment
         if (proofData.data && proofData.data.type === 'file' && proofData.data.isImage) {
             embed.setImage(proofData.data.url);
         }

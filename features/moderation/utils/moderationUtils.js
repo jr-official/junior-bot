@@ -1,6 +1,9 @@
 // features/moderation/utils/moderationUtils.js
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
+// Hardcoded mod-logs channel ID
+const MOD_LOGS_CHANNEL_ID = '1385991704670244915';
+
 async function canModerate(moderator, target) {
     try {
         if (moderator.id === target.id) {
@@ -161,14 +164,30 @@ async function sendDM(user, options) {
 
 async function logModeration(guild, action) {
     try {
-        const logChannel = guild.channels.cache.find(channel =>
-            channel.name.includes('mod-log') ||
-            channel.name.includes('modlog') ||
-            channel.name.includes('audit-log') ||
-            channel.name.includes('logs')
-        );
+        // Use specific mod-logs channel ID
+        let logChannel = guild.channels.cache.get(MOD_LOGS_CHANNEL_ID);
 
-        if (!logChannel || !logChannel.isTextBased()) return;
+        // Fallback to name search if channel not found
+        if (!logChannel) {
+            console.warn(`Mod-logs channel (${MOD_LOGS_CHANNEL_ID}) not found, searching by name as fallback...`);
+            logChannel = guild.channels.cache.find(channel =>
+                channel.name.includes('mod-log') ||
+                channel.name.includes('modlog') ||
+                channel.name.includes('audit-log') ||
+                channel.name.includes('logs')
+            );
+        }
+
+        // Check if channel exists and is text-based
+        if (!logChannel) {
+            console.warn('No mod-logs channel found, skipping moderation log...');
+            return;
+        }
+
+        if (!logChannel.isTextBased()) {
+            console.warn('Mod-logs channel is not text-based, skipping log...');
+            return;
+        }
 
         const embed = new EmbedBuilder()
             .setTimestamp()
