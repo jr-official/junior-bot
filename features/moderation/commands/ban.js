@@ -17,67 +17,59 @@ module.exports = {
 
     slashCommand: new SlashCommandBuilder()
         .setName('ban')
-        .setDescription('Ban management commands')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('add')
-                .setDescription('Ban one or multiple members')
-                .addStringOption(option =>
-                    option.setName('user')
-                        .setDescription('User(s) to ban (mention, ID, or username)')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('reason')
-                        .setDescription('Reason for the ban')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('duration')
-                        .setDescription('Duration of ban (e.g., 1d, 1w, 1m, permanent)')
-                        .setRequired(false))
-                .addBooleanOption(option =>
-                    option.setName('soft')
-                        .setDescription('Soft ban (ban then immediately unban to delete messages)')
-                        .setRequired(false))
-                .addIntegerOption(option =>
-                    option.setName('purge_days')
-                        .setDescription('Days of messages to delete (0-7)')
-                        .setMinValue(0)
-                        .setMaxValue(7)
-                        .setRequired(false))
-                .addBooleanOption(option =>
-                    option.setName('hack')
-                        .setDescription('Force ban user not in server')
-                        .setRequired(false))
-                .addBooleanOption(option =>
-                    option.setName('dm')
-                        .setDescription('Send DM to user about ban')
-                        .setRequired(false))
-                .addStringOption(option =>
-                    option.setName('proof_url')
-                        .setDescription('Evidence/proof URL')
-                        .setRequired(false))
-                .addAttachmentOption(option =>
-                    option.setName('proof_file')
-                        .setDescription('Upload proof file (image/document)')
-                        .setRequired(false)))
+        .setDescription('Ban one or multiple members from the server')
+        .addStringOption(option =>
+            option.setName('user')
+                .setDescription('User(s) to ban (mention, ID, or username)')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for the ban')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('duration')
+                .setDescription('Duration of ban (e.g., 1d, 1w, 1m, permanent)')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('soft')
+                .setDescription('Soft ban (ban then immediately unban to delete messages)')
+                .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName('purge_days')
+                .setDescription('Days of messages to delete (0-7)')
+                .setMinValue(0)
+                .setMaxValue(7)
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('hack')
+                .setDescription('Force ban user not in server')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('dm')
+                .setDescription('Send DM to user about ban')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('proof_url')
+                .setDescription('Evidence/proof URL')
+                .setRequired(false))
+        .addAttachmentOption(option =>
+            option.setName('proof_file')
+                .setDescription('Upload proof file (image/document)')
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
     async executeSlash(interaction) {
-        const subcommand = interaction.options.getSubcommand();
-
-        if (subcommand === 'add') {
-            await this.executeBan(interaction, {
-                users: interaction.options.getString('user'),
-                reason: interaction.options.getString('reason'),
-                duration: interaction.options.getString('duration'),
-                soft: interaction.options.getBoolean('soft') || false,
-                purge_days: interaction.options.getInteger('purge_days') || 0,
-                hack: interaction.options.getBoolean('hack') || false,
-                dm: interaction.options.getBoolean('dm') !== false,
-                proof_url: interaction.options.getString('proof_url'),
-                proof_file: interaction.options.getAttachment('proof_file')
-            });
-        }
+        await this.executeBan(interaction, {
+            users: interaction.options.getString('user'),
+            reason: interaction.options.getString('reason'),
+            duration: interaction.options.getString('duration'),
+            soft: interaction.options.getBoolean('soft') || false,
+            purge_days: interaction.options.getInteger('purge_days') || 0,
+            hack: interaction.options.getBoolean('hack') || false,
+            dm: interaction.options.getBoolean('dm') !== false,
+            proof_url: interaction.options.getString('proof_url'),
+            proof_file: interaction.options.getAttachment('proof_file')
+        });
     },
 
     async executeBan(context, options) {
