@@ -9,13 +9,13 @@ const muteCommand   = require('./commands/mute');
 const unmuteCommand = require('./commands/unmute');
 const warnCommand   = require('./commands/warn');
 const warnsCommand  = require('./commands/warns');
-const { handleWarnsButton } = require('./commands/warns');
+const { handleWarnsButton }      = require('./commands/warns');
+const { handleWarnRemoveButton } = require('./commands/warn');
 const warningService = require('./services/warningService');
 
 const PREFIX = '!';
 
 module.exports = (client) => {
-    // Store all moderation commands
     client.moderationCommands = new Collection();
     client.moderationCommands.set('ban',    banCommand);
     client.moderationCommands.set('unban',  unbanCommand);
@@ -32,27 +32,40 @@ module.exports = (client) => {
 
             const commands = [];
             for (const command of client.moderationCommands.values()) {
-                if (command.slashCommand) {
-                    commands.push(command.slashCommand.toJSON());
-                }
+                if (command.slashCommand) commands.push(command.slashCommand.toJSON());
             }
 
             await client.application.commands.set(commands);
             console.log('✅ Moderation slash commands registered globally');
             console.log('📝 Note: Global commands may take up to 1 hour to appear in all servers');
 
-            // Ensure MongoDB warning indexes exist
             await warningService.ensureIndexes();
         } catch (error) {
             console.error('❌ Failed to register moderation slash commands:', error);
         }
     });
 
-    // Handle slash command interactions + warns pagination buttons
+    // Handle all interactions
     client.on(Events.InteractionCreate, async (interaction) => {
-        // ── Warns pagination buttons ────────────────────────────────────────
+
+        // ── Button interactions ──────────────────────────────────────────────
         if (interaction.isButton()) {
             const id = interaction.customId;
+
+            // warn remove picker buttons
+            if (id.startsWith('warnrm_')) {
+                try {
+                    await handleWarnRemoveButton(interaction, interaction.guild);
+                } catch (error) {
+                    console.error('❌ Error handling warn remove button:', error);
+                    if (!interaction.replied && !interaction.deferred) {
+                        await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
+                    }
+                }
+                return;
+            }
+
+            // warns view pagination buttons
             if (id.startsWith('warns_lb_') || id.startsWith('warns_user_')) {
                 try {
                     await handleWarnsButton(interaction);
@@ -76,10 +89,7 @@ module.exports = (client) => {
             await slashCommandHandler.handle(interaction, command);
         } catch (error) {
             console.error('❌ Error handling slash command:', error);
-            const errorMessage = {
-                content: '❌ An error occurred while executing this command.',
-                ephemeral: true
-            };
+            const errorMessage = { content: '❌ An error occurred while executing this command.', ephemeral: true };
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp(errorMessage);
             } else {
