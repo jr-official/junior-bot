@@ -55,9 +55,8 @@ async function handleProofData(proofUrl, proofFile) {
         return { data: null, error: null };
     }
 
-    // Handle file upload
     if (proofFile) {
-        const maxFileSize = 25 * 1024 * 1024; // 25MB Discord limit
+        const maxFileSize = 25 * 1024 * 1024;
         const allowedTypes = [
             'image/jpeg', 'image/png', 'image/gif', 'image/webp',
             'application/pdf', 'text/plain', 'application/json',
@@ -75,8 +74,6 @@ async function handleProofData(proofUrl, proofFile) {
             };
         }
 
-        const isImage = proofFile.contentType.startsWith('image/');
-
         return {
             data: {
                 type: 'file',
@@ -84,23 +81,19 @@ async function handleProofData(proofUrl, proofFile) {
                 filename: proofFile.name,
                 size: proofFile.size,
                 contentType: proofFile.contentType,
-                isImage,
+                isImage: proofFile.contentType.startsWith('image/'),
                 uploadedAt: new Date().toISOString()
             },
             error: null
         };
     }
 
-    // Handle URL
     if (proofUrl) {
         try {
             const url = new URL(proofUrl);
-            const allowedProtocols = ['http:', 'https:'];
-
-            if (!allowedProtocols.includes(url.protocol)) {
+            if (!['http:', 'https:'].includes(url.protocol)) {
                 return { data: null, error: 'Only HTTP and HTTPS URLs are allowed' };
             }
-
             return {
                 data: {
                     type: 'url',
@@ -110,7 +103,7 @@ async function handleProofData(proofUrl, proofFile) {
                 },
                 error: null
             };
-        } catch (error) {
+        } catch {
             return { data: null, error: 'Invalid URL format' };
         }
     }
@@ -118,9 +111,23 @@ async function handleProofData(proofUrl, proofFile) {
     return { data: null, error: null };
 }
 
+// ─── formatModeratorField ────────────────────────────────────────────────────
+// Returns a consistent "tag (ID)" string for DM embeds.
+// Accepts either (tag, id) separately or a single user object.
+function formatModeratorField(tagOrUser, id) {
+    if (tagOrUser && typeof tagOrUser === 'object') {
+        return `${tagOrUser.tag} (${tagOrUser.id})`;
+    }
+    return `${tagOrUser} (${id})`;
+}
+
+// ─── sendDM ──────────────────────────────────────────────────────────────────
 async function sendDM(user, options) {
     try {
         const embed = new EmbedBuilder().setTimestamp();
+
+        // All cases now show "Tag (ID)" for the moderator field
+        const modField = formatModeratorField(options.moderatorTag, options.moderatorId);
 
         switch (options.type) {
             case 'ban':
@@ -128,17 +135,15 @@ async function sendDM(user, options) {
                     .setTitle('🔨 You have been banned')
                     .setDescription(`You have been banned from **${options.guild}**`)
                     .addFields(
-                        { name: 'Reason', value: options.reason, inline: false },
-                        { name: 'Moderator', value: options.moderator, inline: true }
+                        { name: 'Reason',    value: options.reason, inline: false },
+                        { name: 'Moderator', value: modField,       inline: true  }
                     );
                 if (options.duration) {
                     embed.addFields({ name: 'Duration', value: options.duration, inline: true });
                 }
                 if (options.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) {
-                        embed.setImage(options.proof.url);
-                    }
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
                 }
                 break;
 
@@ -147,8 +152,8 @@ async function sendDM(user, options) {
                     .setTitle('🔓 You have been unbanned')
                     .setDescription(`You have been unbanned from **${options.guild}**`)
                     .addFields(
-                        { name: 'Reason', value: options.reason, inline: false },
-                        { name: 'Moderator', value: options.moderator, inline: true }
+                        { name: 'Reason',    value: options.reason, inline: false },
+                        { name: 'Moderator', value: modField,       inline: true  }
                     );
                 break;
 
@@ -157,14 +162,12 @@ async function sendDM(user, options) {
                     .setTitle('👢 You have been kicked')
                     .setDescription(`You have been kicked from **${options.guild}**`)
                     .addFields(
-                        { name: 'Reason', value: options.reason, inline: false },
-                        { name: 'Moderator', value: options.moderator, inline: true }
+                        { name: 'Reason',    value: options.reason, inline: false },
+                        { name: 'Moderator', value: modField,       inline: true  }
                     );
                 if (options.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) {
-                        embed.setImage(options.proof.url);
-                    }
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
                 }
                 break;
 
@@ -173,9 +176,9 @@ async function sendDM(user, options) {
                     .setTitle('🔇 You have been muted')
                     .setDescription(`You have been timed out in **${options.guild}**`)
                     .addFields(
-                        { name: 'Reason', value: options.reason, inline: false },
-                        { name: 'Duration', value: options.duration || 'Unknown', inline: true },
-                        { name: 'Moderator', value: options.moderator, inline: true }
+                        { name: 'Reason',    value: options.reason,              inline: false },
+                        { name: 'Duration',  value: options.duration || 'Unknown', inline: true  },
+                        { name: 'Moderator', value: modField,                    inline: true  }
                     );
                 if (options.expiresAt) {
                     embed.addFields({
@@ -186,9 +189,7 @@ async function sendDM(user, options) {
                 }
                 if (options.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) {
-                        embed.setImage(options.proof.url);
-                    }
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
                 }
                 break;
 
@@ -197,14 +198,42 @@ async function sendDM(user, options) {
                     .setTitle('🔊 You have been unmuted')
                     .setDescription(`Your timeout has been removed in **${options.guild}**`)
                     .addFields(
-                        { name: 'Reason', value: options.reason, inline: false },
-                        { name: 'Moderator', value: options.moderator, inline: true }
+                        { name: 'Reason',    value: options.reason, inline: false },
+                        { name: 'Moderator', value: modField,       inline: true  }
                     );
                 if (options.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) {
-                        embed.setImage(options.proof.url);
-                    }
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+                }
+                break;
+
+            case 'warn':
+                embed.setColor('#ffcc00')
+                    .setTitle('⚠️ You have received a warning')
+                    .setDescription(`You have been warned in **${options.guild}**`)
+                    .addFields(
+                        { name: 'Reason',    value: options.reason, inline: false },
+                        { name: 'Moderator', value: modField,       inline: true  }
+                    );
+                if (options.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+                }
+                break;
+
+            case 'warn_remove':
+                embed.setColor('#00ccff')
+                    .setTitle('🗑️ A warning has been removed')
+                    .setDescription(`A warning was removed from your record in **${options.guild}**`)
+                    .addFields(
+                        { name: 'Removal Reason',   value: options.reason,         inline: false },
+                        { name: 'Original Warning', value: options.originalReason, inline: false },
+                        { name: 'Moderator',        value: modField,               inline: true  },
+                        { name: 'Remaining Warnings', value: `${options.remaining}`, inline: true }
+                    );
+                if (options.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
                 }
                 break;
 
@@ -218,27 +247,23 @@ async function sendDM(user, options) {
     }
 }
 
+// ─── logModeration ───────────────────────────────────────────────────────────
 async function logModeration(guild, action) {
     try {
         let logChannel = guild.channels.cache.get(MOD_LOGS_CHANNEL_ID);
 
         if (!logChannel) {
-            console.warn(`Mod-logs channel (${MOD_LOGS_CHANNEL_ID}) not found, searching by name as fallback...`);
-            logChannel = guild.channels.cache.find(channel =>
-                channel.name.includes('mod-log') ||
-                channel.name.includes('modlog') ||
-                channel.name.includes('audit-log') ||
-                channel.name.includes('logs')
+            console.warn(`Mod-logs channel (${MOD_LOGS_CHANNEL_ID}) not found, searching by name...`);
+            logChannel = guild.channels.cache.find(ch =>
+                ch.name.includes('mod-log') ||
+                ch.name.includes('modlog') ||
+                ch.name.includes('audit-log') ||
+                ch.name.includes('logs')
             );
         }
 
-        if (!logChannel) {
-            console.warn('No mod-logs channel found, skipping moderation log...');
-            return;
-        }
-
-        if (!logChannel.isTextBased()) {
-            console.warn('Mod-logs channel is not text-based, skipping log...');
+        if (!logChannel || !logChannel.isTextBased()) {
+            console.warn('No usable mod-logs channel found, skipping log.');
             return;
         }
 
@@ -246,114 +271,118 @@ async function logModeration(guild, action) {
             .setTimestamp()
             .setFooter({ text: `Case ID: ${Date.now().toString(36)}` });
 
+        const modValue = `${action.moderator.tag} (${action.moderator.id})`;
+        const targetValue = `${action.target.tag} (${action.target.id})`;
+
         switch (action.type) {
             case 'ban':
-                embed.setColor('#ff0000')
-                    .setTitle('🔨 Member Banned')
+                embed.setColor('#ff0000').setTitle('🔨 Member Banned')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false }
+                        { name: 'User',      value: targetValue, inline: true },
+                        { name: 'Moderator', value: modValue,    inline: true },
+                        { name: 'Reason',    value: action.reason, inline: false }
                     );
-                if (action.duration) {
-                    embed.addFields({ name: 'Duration', value: action.duration, inline: true });
-                }
-                if (action.expiresAt) {
-                    embed.addFields({ name: 'Expires', value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`, inline: true });
-                }
-                if (action.purge_days > 0) {
-                    embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
-                }
+                if (action.duration)  embed.addFields({ name: 'Duration', value: action.duration, inline: true });
+                if (action.expiresAt) embed.addFields({ name: 'Expires',  value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`, inline: true });
+                if (action.purge_days > 0) embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
                 if (action.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
-                    if (action.proof.type === 'file' && action.proof.isImage) {
-                        embed.setThumbnail(action.proof.url);
-                    }
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
                 }
                 break;
 
             case 'softban':
-                embed.setColor('#ff9500')
-                    .setTitle('🔨 Member Soft Banned')
+                embed.setColor('#ff9500').setTitle('🔨 Member Soft Banned')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false }
+                        { name: 'User',      value: targetValue,   inline: true },
+                        { name: 'Moderator', value: modValue,      inline: true },
+                        { name: 'Reason',    value: action.reason, inline: false }
                     );
-                if (action.purge_days > 0) {
-                    embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
-                }
+                if (action.purge_days > 0) embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
                 if (action.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
-                    if (action.proof.type === 'file' && action.proof.isImage) {
-                        embed.setThumbnail(action.proof.url);
-                    }
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
                 }
                 break;
 
             case 'unban':
-                embed.setColor('#00ff00')
-                    .setTitle('🔓 Member Unbanned')
+                embed.setColor('#00ff00').setTitle('🔓 Member Unbanned')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false }
+                        { name: 'User',      value: targetValue,   inline: true },
+                        { name: 'Moderator', value: modValue,      inline: true },
+                        { name: 'Reason',    value: action.reason, inline: false }
                     );
                 break;
 
             case 'kick':
-                embed.setColor('#ff6600')
-                    .setTitle('👢 Member Kicked')
+                embed.setColor('#ff6600').setTitle('👢 Member Kicked')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false }
+                        { name: 'User',      value: targetValue,   inline: true },
+                        { name: 'Moderator', value: modValue,      inline: true },
+                        { name: 'Reason',    value: action.reason, inline: false }
                     );
                 if (action.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
-                    if (action.proof.type === 'file' && action.proof.isImage) {
-                        embed.setThumbnail(action.proof.url);
-                    }
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
                 }
                 break;
 
             case 'mute':
-                embed.setColor('#ffa500')
-                    .setTitle('🔇 Member Muted')
+                embed.setColor('#ffa500').setTitle('🔇 Member Muted')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false },
-                        { name: 'Duration', value: action.duration || 'Unknown', inline: true }
+                        { name: 'User',      value: targetValue,                 inline: true },
+                        { name: 'Moderator', value: modValue,                    inline: true },
+                        { name: 'Reason',    value: action.reason,               inline: false },
+                        { name: 'Duration',  value: action.duration || 'Unknown', inline: true }
                     );
-                if (action.expiresAt) {
-                    embed.addFields({
-                        name: 'Expires',
-                        value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`,
-                        inline: true
-                    });
-                }
+                if (action.expiresAt) embed.addFields({ name: 'Expires', value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`, inline: true });
                 if (action.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
-                    if (action.proof.type === 'file' && action.proof.isImage) {
-                        embed.setThumbnail(action.proof.url);
-                    }
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
                 }
                 break;
 
             case 'unmute':
-                embed.setColor('#00ff99')
-                    .setTitle('🔊 Member Unmuted')
+                embed.setColor('#00ff99').setTitle('🔊 Member Unmuted')
                     .addFields(
-                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
-                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
-                        { name: 'Reason', value: action.reason, inline: false }
+                        { name: 'User',      value: targetValue,   inline: true },
+                        { name: 'Moderator', value: modValue,      inline: true },
+                        { name: 'Reason',    value: action.reason, inline: false }
                     );
                 if (action.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
-                    if (action.proof.type === 'file' && action.proof.isImage) {
-                        embed.setThumbnail(action.proof.url);
-                    }
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
+                }
+                break;
+
+            case 'warn':
+                embed.setColor('#ffcc00').setTitle('⚠️ Member Warned')
+                    .addFields(
+                        { name: 'User',             value: targetValue,               inline: true  },
+                        { name: 'Moderator',        value: modValue,                  inline: true  },
+                        { name: 'Reason',           value: action.reason,             inline: false },
+                        { name: 'Total Warnings',   value: `${action.totalWarnings}`, inline: true  },
+                        { name: 'DM Sent',          value: action.dmSent ? '✅ Yes' : '❌ No', inline: true }
+                    );
+                if (action.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
+                }
+                break;
+
+            case 'warn_remove':
+                embed.setColor('#00ccff').setTitle('🗑️ Warning Removed')
+                    .addFields(
+                        { name: 'User',              value: targetValue,               inline: true  },
+                        { name: 'Moderator',         value: modValue,                  inline: true  },
+                        { name: 'Removal Reason',    value: action.reason,             inline: false },
+                        { name: 'Original Warning',  value: action.originalReason,     inline: false },
+                        { name: 'Remaining Warnings',value: `${action.remaining}`,     inline: true  },
+                        { name: 'DM Sent',           value: action.dmSent ? '✅ Yes' : '❌ No', inline: true }
+                    );
+                if (action.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
+                    if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url);
                 }
                 break;
         }
@@ -364,9 +393,10 @@ async function logModeration(guild, action) {
     }
 }
 
+// ─── parseMembers ────────────────────────────────────────────────────────────
 async function parseMembers(guild, input, allowHackBan = false) {
     const ids = input.split(/[\s,]+/).filter(Boolean);
-    if (!ids.length) return { success: false, message: "No users provided", targets: [] };
+    if (!ids.length) return { success: false, message: 'No users provided', targets: [] };
 
     const targets = [];
 
@@ -386,7 +416,7 @@ async function parseMembers(guild, input, allowHackBan = false) {
                 return { success: false, message: `Invalid user format: ${idOrTag}` };
             }
 
-            if (!user) throw new Error("User not found");
+            if (!user) throw new Error('User not found');
             if (!member && !allowHackBan) {
                 return { success: false, message: `${user.tag} is not in the server.` };
             }
@@ -400,15 +430,14 @@ async function parseMembers(guild, input, allowHackBan = false) {
     return { success: true, targets };
 }
 
-// Helper functions for proof formatting
+// ─── Proof formatters ────────────────────────────────────────────────────────
 function formatProofForDM(proofData) {
     if (!proofData) return 'None provided';
     if (proofData.type === 'file') {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         return `${emoji} **${proofData.filename}**\n[Download](${proofData.url})`;
-    } else if (proofData.type === 'url') {
-        return `🔗 [View Evidence](${proofData.url})`;
     }
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
     return 'None provided';
 }
 
@@ -418,9 +447,8 @@ function formatProofForLog(proofData) {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         const size = formatFileSize(proofData.size);
         return `${emoji} **${proofData.filename}** (${size})\n[View File](${proofData.url})\nUploaded: <t:${Math.floor(new Date(proofData.uploadedAt).getTime() / 1000)}:R>`;
-    } else if (proofData.type === 'url') {
-        return `🔗 [View Evidence](${proofData.url})\nDomain: ${proofData.domain}\nAdded: <t:${Math.floor(new Date(proofData.addedAt).getTime() / 1000)}:R>`;
     }
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})\nDomain: ${proofData.domain}\nAdded: <t:${Math.floor(new Date(proofData.addedAt).getTime() / 1000)}:R>`;
     return 'None provided';
 }
 

@@ -7,14 +7,13 @@ const {
     sendDM,
     logModeration,
     parseMembers,
-    validatePermissions,
     handleProofData
 } = require('../utils/moderationUtils');
 
 module.exports = {
     name: 'ban',
     description: 'Ban one or multiple members from the server',
-    permission: 'BAN_MEMBERS', // Permission identifier for handlers
+    permission: 'BAN_MEMBERS',
 
     slashCommand: new SlashCommandBuilder()
         .setName('ban')
@@ -98,11 +97,9 @@ module.exports = {
             proof_file: null
         };
 
-        // Parse flags and reason
-        let reasonParts = [];
+        const reasonParts = [];
         for (let i = 1; i < args.length; i++) {
             const arg = args[i];
-            
             if (arg === '--soft') {
                 options.soft = true;
             } else if (arg === '--hack') {
@@ -126,7 +123,6 @@ module.exports = {
         }
 
         options.reason = reasonParts.join(' ');
-
         if (!options.reason) {
             return message.reply('❌ **Error:** Reason is required.');
         }
@@ -139,7 +135,6 @@ module.exports = {
         const moderator = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
-        // Handle proof data
         const proofData = await handleProofData(options.proof_url, options.proof_file);
         if (proofData.error) {
             const reply = `❌ Proof validation failed: ${proofData.error}`;
@@ -193,7 +188,8 @@ module.exports = {
                         guild: guild.name,
                         reason: options.reason,
                         duration: duration,
-                        moderator: moderator.user.username,
+                        moderatorTag: moderator.user.tag,
+                        moderatorId:  moderator.user.id,
                         proof: proofData.data
                     });
                 }
@@ -250,15 +246,11 @@ module.exports = {
         const details = [`**Reason:** ${options.reason}`];
         if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
-        
-        if (proofData.data) {
-            const proofDisplay = formatProofDisplay(proofData.data);
-            details.push(`**Proof:** ${proofDisplay}`);
-        }
+        if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
 
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
-        if (proofData.data && proofData.data.type === 'file' && proofData.data.isImage) {
+        if (proofData.data?.type === 'file' && proofData.data.isImage) {
             embed.setImage(proofData.data.url);
         }
 
@@ -267,17 +259,14 @@ module.exports = {
     }
 };
 
-// Helper function to format proof display
 function formatProofDisplay(proofData) {
     if (!proofData) return 'None';
-    
     if (proofData.type === 'file') {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
     } else if (proofData.type === 'url') {
         return `🔗 [View Evidence](${proofData.url})`;
     }
-    
     return 'None';
 }
 

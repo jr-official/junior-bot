@@ -56,35 +56,22 @@ module.exports = {
                 '**Options:**\n' +
                 '`--no-dm` - Don\'t send DM to user\n' +
                 '`--proof=<url>` - Evidence URL\n' +
-                '**Example:** `!kick @user Breaking rules --proof=https://example.com/screenshot.png`'
+                '**Example:** `!kick @user Breaking rules`'
             );
         }
 
-        const options = {
-            users: args[0],
-            reason: '',
-            dm: true,
-            proof_url: null,
-            proof_file: null
-        };
-
+        const options = { users: args[0], reason: '', dm: true, proof_url: null, proof_file: null };
         const reasonParts = [];
+
         for (let i = 1; i < args.length; i++) {
             const arg = args[i];
-            if (arg === '--no-dm') {
-                options.dm = false;
-            } else if (arg.startsWith('--proof=')) {
-                options.proof_url = arg.split('=')[1];
-            } else {
-                reasonParts.push(arg);
-            }
+            if (arg === '--no-dm') options.dm = false;
+            else if (arg.startsWith('--proof=')) options.proof_url = arg.split('=')[1];
+            else reasonParts.push(arg);
         }
 
         options.reason = reasonParts.join(' ');
-
-        if (!options.reason) {
-            return message.reply('❌ **Error:** Reason is required.');
-        }
+        if (!options.reason) return message.reply('❌ **Error:** Reason is required.');
 
         await this.executeKick(message, options);
     },
@@ -94,7 +81,6 @@ module.exports = {
         const moderator = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
-        // Handle proof data
         const proofData = await handleProofData(options.proof_url, options.proof_file);
         if (proofData.error) {
             const reply = `❌ Proof validation failed: ${proofData.error}`;
@@ -102,7 +88,6 @@ module.exports = {
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
-        // Parse members — kicks only work on members in the server (no hack option)
         const memberResult = await parseMembers(guild, options.users, false);
         if (!memberResult.success) {
             const reply = `❌ ${memberResult.message}`;
@@ -110,16 +95,11 @@ module.exports = {
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
-        const targets = memberResult.targets;
         const results = { successful: [], failed: [] };
+        if (isInteraction) await context.deferReply();
 
-        if (isInteraction) {
-            await context.deferReply();
-        }
-
-        for (const target of targets) {
+        for (const target of memberResult.targets) {
             try {
-                // Kicks require the user to be in the server, so target.member must exist
                 if (!target.member) {
                     results.failed.push({ user: target.user, reason: 'User is not in the server.' });
                     continue;
@@ -141,13 +121,13 @@ module.exports = {
                         type: 'kick',
                         guild: guild.name,
                         reason: options.reason,
-                        moderator: moderator.user.username,
+                        moderatorTag: moderator.user.tag,
+                        moderatorId:  moderator.user.id,
                         proof: proofData.data
                     });
                 }
 
                 await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
-
                 results.successful.push({ user: target.user });
 
                 await logModeration(guild, {
@@ -158,7 +138,7 @@ module.exports = {
                     proof: proofData.data
                 });
             } catch (error) {
-                console.error(`Failed to kick ${target.user?.tag || target.id}:`, error);
+                console.error(`Failed to kick ${target.user?.tag}:`, error);
                 results.failed.push({ user: target.user, reason: error.message });
             }
         }
@@ -186,16 +166,10 @@ module.exports = {
         }
 
         const details = [`**Reason:** ${options.reason}`];
-
-        if (proofData.data) {
-            details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
-        }
-
+        if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
-        if (proofData.data?.type === 'file' && proofData.data.isImage) {
-            embed.setImage(proofData.data.url);
-        }
+        if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
@@ -207,9 +181,8 @@ function formatProofDisplay(proofData) {
     if (proofData.type === 'file') {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
-    } else if (proofData.type === 'url') {
-        return `🔗 [View Evidence](${proofData.url})`;
     }
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
     return 'None';
 }
 

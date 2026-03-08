@@ -1,13 +1,14 @@
 // features/moderation/handlers/prefixCommandHandler.js
 const { PermissionFlagsBits } = require('discord.js');
 
-// Map command names to the Discord permission required
 const COMMAND_PERMISSIONS = {
-    ban:    { flag: PermissionFlagsBits.BanMembers,       label: 'ban members' },
-    unban:  { flag: PermissionFlagsBits.BanMembers,       label: 'ban members' },
-    kick:   { flag: PermissionFlagsBits.KickMembers,      label: 'kick members' },
-    mute:   { flag: PermissionFlagsBits.ModerateMembers,  label: 'moderate members (timeout)' },
-    unmute: { flag: PermissionFlagsBits.ModerateMembers,  label: 'moderate members (timeout)' }
+    ban:    { flag: PermissionFlagsBits.BanMembers,      label: 'ban members' },
+    unban:  { flag: PermissionFlagsBits.BanMembers,      label: 'ban members' },
+    kick:   { flag: PermissionFlagsBits.KickMembers,     label: 'kick members' },
+    mute:   { flag: PermissionFlagsBits.ModerateMembers, label: 'moderate members (timeout)' },
+    unmute: { flag: PermissionFlagsBits.ModerateMembers, label: 'moderate members (timeout)' },
+    warn:   { flag: PermissionFlagsBits.ModerateMembers, label: 'moderate members' },
+    warns:  { flag: PermissionFlagsBits.ModerateMembers, label: 'moderate members' }
 };
 
 module.exports = {
@@ -18,12 +19,10 @@ module.exports = {
             return message.reply('❌ Unknown command permission configuration.');
         }
 
-        // Check if the user has the required permission
         if (!message.member.permissions.has(perm.flag)) {
             return message.reply(`❌ You do not have permission to ${perm.label}.`);
         }
 
-        // Check if the bot has the required permission
         if (!message.guild.members.me.permissions.has(perm.flag)) {
             return message.reply(`❌ I do not have permission to ${perm.label} in this server.`);
         }
