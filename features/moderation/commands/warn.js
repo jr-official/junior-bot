@@ -495,7 +495,4 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Need logModeration for the button handler
-const { logModeration } = require('../utils/moderationUtils');
-
 module.exports.handleWarnRemoveButton = handleWarnRemoveButton;
