@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
 const { validatePermissions, sendDM, logModeration } = require('../utils/moderationUtils');
+const { generateCaseId } = require('../utils/caseID');
 
 module.exports = {
     name: 'unban',
@@ -70,16 +71,20 @@ module.exports = {
 
             await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderator.user.tag}`);
 
+            const caseId = generateCaseId('unban');
+
             await sendDM(targetUser, {
                 type: 'unban',
                 guild: guild.name,
                 reason: options.reason,
                 moderatorTag: moderator.user.tag,
-                moderatorId:  moderator.user.id
+                moderatorId:  moderator.user.id,
+                caseId
             });
 
             await logModeration(guild, {
                 type: 'unban',
+                caseId,
                 target: targetUser,
                 moderator: moderator.user,
                 reason: options.reason
@@ -89,6 +94,7 @@ module.exports = {
                 .setColor('#00ff00')
                 .setTitle('🔓 User Unbanned')
                 .addFields(
+                    { name: 'Case ID',   value: caseId, inline: true },
                     { name: 'User',      value: `${targetUser.tag} (${targetUser.id})`, inline: true },
                     { name: 'Moderator', value: `${moderator.user.tag} (${moderator.user.id})`, inline: true },
                     { name: 'Reason',    value: options.reason, inline: false }

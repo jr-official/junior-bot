@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
 const { parseDuration, formatDuration } = require('../utils/durationParser');
+const { generateCaseId } = require('../utils/caseID');
 const {
     canModerate,
     sendDM,
@@ -182,6 +183,8 @@ module.exports = {
                     }
                 }
 
+                const caseId = generateCaseId(options.soft ? 'softban' : 'ban');
+
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'ban',
@@ -190,7 +193,8 @@ module.exports = {
                         duration: duration,
                         moderatorTag: moderator.user.tag,
                         moderatorId:  moderator.user.id,
-                        proof: proofData.data
+                        proof: proofData.data,
+                        caseId
                     });
                 }
 
@@ -203,10 +207,11 @@ module.exports = {
                     await guild.members.unban(target.user, `Soft ban completed | Moderator: ${moderator.user.tag}`);
                 }
 
-                results.successful.push({ user: target.user, member: target.member });
+                results.successful.push({ user: target.user, member: target.member, caseId });
 
                 await logModeration(guild, {
                     type: options.soft ? 'softban' : 'ban',
+                    caseId,
                     target: target.user,
                     moderator: moderator.user,
                     reason: options.reason,
@@ -230,7 +235,7 @@ module.exports = {
         if (results.successful.length > 0) {
             embed.addFields({
                 name: `${options.soft ? 'Soft Banned' : 'Banned'} (${results.successful.length})`,
-                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id})`).join('\n'),
+                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``).join('\n'),
                 inline: false
             });
         }

@@ -8,6 +8,7 @@ const {
     parseMembers,
     handleProofData
 } = require('../utils/moderationUtils');
+const { generateCaseId } = require('../utils/caseID');
 
 module.exports = {
     name: 'kick',
@@ -116,6 +117,8 @@ module.exports = {
                     continue;
                 }
 
+                const caseId = generateCaseId('kick');
+
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'kick',
@@ -123,15 +126,17 @@ module.exports = {
                         reason: options.reason,
                         moderatorTag: moderator.user.tag,
                         moderatorId:  moderator.user.id,
-                        proof: proofData.data
+                        proof: proofData.data,
+                        caseId
                     });
                 }
 
                 await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
-                results.successful.push({ user: target.user });
+                results.successful.push({ user: target.user, caseId });
 
                 await logModeration(guild, {
                     type: 'kick',
+                    caseId,
                     target: target.user,
                     moderator: moderator.user,
                     reason: options.reason,
@@ -152,7 +157,7 @@ module.exports = {
         if (results.successful.length > 0) {
             embed.addFields({
                 name: `Kicked (${results.successful.length})`,
-                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id})`).join('\n'),
+                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``).join('\n'),
                 inline: false
             });
         }

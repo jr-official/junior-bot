@@ -9,6 +9,7 @@ const {
     parseMembers,
     handleProofData
 } = require('../utils/moderationUtils');
+const { generateCaseId } = require('../utils/caseID');
 
 const MAX_TIMEOUT_MS = 28 * 24 * 60 * 60 * 1000;
 
@@ -155,6 +156,8 @@ module.exports = {
                     continue;
                 }
 
+                const caseId = generateCaseId('mute');
+
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'mute',
@@ -164,15 +167,17 @@ module.exports = {
                         expiresAt,
                         moderatorTag: moderator.user.tag,
                         moderatorId:  moderator.user.id,
-                        proof: proofData.data
+                        proof: proofData.data,
+                        caseId
                     });
                 }
 
                 await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
-                results.successful.push({ user: target.user, expiresAt });
+                results.successful.push({ user: target.user, expiresAt, caseId });
 
                 await logModeration(guild, {
                     type: 'mute',
+                    caseId,
                     target: target.user,
                     moderator: moderator.user,
                     reason: options.reason,
@@ -196,7 +201,7 @@ module.exports = {
             embed.addFields({
                 name: `Muted (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id})\n   └ Expires: <t:${Math.floor(r.expiresAt.getTime() / 1000)}:R>`
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\`\n   └ Expires: <t:${Math.floor(r.expiresAt.getTime() / 1000)}:R>`
                 ).join('\n'),
                 inline: false
             });
