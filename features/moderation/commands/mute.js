@@ -1,0 +1,278 @@
+// features/moderation/commands/mute.js
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { MessageFlags } = require('discord-api-types/v10');
+const { parseDuration, formatDuration } = require('../utils/durationParser');
+const {
+    canModerate,
+    sendDM,
+    logModeration,
+    parseMembers,
+    handleProofData
+} = require('../utils/moderationUtils');
+
+// Discord's maximum timeout duration: 28 days in milliseconds
+const MAX_TIMEOUT_MS = 28 * 24 * 60 * 60 * 1000;
+
+module.exports = {
+    name: 'mute',
+    description: 'Timeout (mute) one or multiple members in the server',
+    permission: 'MODERATE_MEMBERS',
+
+    slashCommand: new SlashCommandBuilder()
+        .setName('mute')
+        .setDescription('Timeout (mute) one or multiple members in the server')
+        .addStringOption(option =>
+            option.setName('user')
+                .setDescription('User(s) to mute (mention, ID, or multiple space-separated)')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('duration')
+                .setDescription('Mute duration (e.g. 10m, 1h, 1d, 1w) — max 28 days')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for the mute')
+                .setRequired(true))
+        .addBooleanOption(option =>
+            option.setName('dm')
+                .setDescription('Send DM to user about mute (default: true)')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('proof_url')
+                .setDescription('Evidence/proof URL')
+                .setRequired(false))
+        .addAttachmentOption(option =>
+            option.setName('proof_file')
+                .setDescription('Upload proof file (image/document)')
+                .setRequired(false))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+    async executeSlash(interaction) {
+        await this.executeMute(interaction, {
+            users: interaction.options.getString('user'),
+            duration: interaction.options.getString('duration'),
+            reason: interaction.options.getString('reason'),
+            dm: interaction.options.getBoolean('dm') !== false,
+            proof_url: interaction.options.getString('proof_url'),
+            proof_file: interaction.options.getAttachment('proof_file')
+        });
+    },
+
+    async executePrefix(message, args) {
+        if (args.length < 3) {
+            return message.reply(
+                '❌ **Usage:** `!mute <user> <duration> <reason> [options]`\n' +
+                '**Options:**\n' +
+                '`--no-dm` - Don\'t send DM to user\n' +
+                '`--proof=<url>` - Evidence URL\n' +
+                '**Duration examples:** `10m`, `1h`, `6h`, `1d`, `1w`\n' +
+                '**Max duration:** 28 days\n' +
+                '**Example:** `!mute @user 1h Spamming in chat`'
+            );
+        }
+
+        const options = {
+            users: args[0],
+            duration: args[1],
+            reason: '',
+            dm: true,
+            proof_url: null,
+            proof_file: null
+        };
+
+        const reasonParts = [];
+        for (let i = 2; i < args.length; i++) {
+            const arg = args[i];
+            if (arg === '--no-dm') {
+                options.dm = false;
+            } else if (arg.startsWith('--proof=')) {
+                options.proof_url = arg.split('=')[1];
+            } else {
+                reasonParts.push(arg);
+            }
+        }
+
+        options.reason = reasonParts.join(' ');
+
+        if (!options.reason) {
+            return message.reply('❌ **Error:** Reason is required.');
+        }
+
+        await this.executeMute(message, options);
+    },
+
+    async executeMute(context, options) {
+        const guild = context.guild;
+        const moderator = context.member || context.author;
+        const isInteraction = context.replied !== undefined;
+
+        // Parse and validate duration
+        const parsed = parseDuration(options.duration);
+        if (!parsed.success) {
+            const reply = `❌ Invalid duration format. Use formats like: 10m, 1h, 6h, 1d, 1w (max 28 days)`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        // Reject permanent — Discord timeouts must have an end date
+        if (!parsed.ms) {
+            const reply = `❌ Mute duration cannot be permanent. Discord timeouts require a set duration (max 28 days).`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        // Enforce Discord's 28-day maximum
+        if (parsed.ms > MAX_TIMEOUT_MS) {
+            const reply = `❌ Mute duration cannot exceed 28 days (Discord limitation).`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        const duration = parsed.duration;
+        const expiresAt = new Date(Date.now() + parsed.ms);
+
+        // Handle proof data
+        const proofData = await handleProofData(options.proof_url, options.proof_file);
+        if (proofData.error) {
+            const reply = `❌ Proof validation failed: ${proofData.error}`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        // Parse members — mutes only work on members currently in the server
+        const memberResult = await parseMembers(guild, options.users, false);
+        if (!memberResult.success) {
+            const reply = `❌ ${memberResult.message}`;
+            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
+            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+        }
+
+        const targets = memberResult.targets;
+        const results = { successful: [], failed: [] };
+
+        if (isInteraction) {
+            await context.deferReply();
+        }
+
+        for (const target of targets) {
+            try {
+                if (!target.member) {
+                    results.failed.push({ user: target.user, reason: 'User is not in the server.' });
+                    continue;
+                }
+
+                const canMod = await canModerate(moderator, target.member);
+                if (!canMod.success) {
+                    results.failed.push({ user: target.user, reason: canMod.message });
+                    continue;
+                }
+
+                if (!target.member.moderatable) {
+                    results.failed.push({ user: target.user, reason: 'I cannot moderate this user (insufficient permissions or role hierarchy).' });
+                    continue;
+                }
+
+                // Check if already muted
+                if (target.member.communicationDisabledUntilTimestamp && target.member.communicationDisabledUntilTimestamp > Date.now()) {
+                    const existingExpiry = new Date(target.member.communicationDisabledUntilTimestamp);
+                    results.failed.push({
+                        user: target.user,
+                        reason: `Already muted until <t:${Math.floor(existingExpiry.getTime() / 1000)}:F>. Use \`/unmute\` first.`
+                    });
+                    continue;
+                }
+
+                if (options.dm && target.user) {
+                    await sendDM(target.user, {
+                        type: 'mute',
+                        guild: guild.name,
+                        reason: options.reason,
+                        duration: duration,
+                        expiresAt: expiresAt,
+                        moderator: moderator.user.username,
+                        proof: proofData.data
+                    });
+                }
+
+                await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
+
+                results.successful.push({ user: target.user, expiresAt });
+
+                await logModeration(guild, {
+                    type: 'mute',
+                    target: target.user,
+                    moderator: moderator.user,
+                    reason: options.reason,
+                    duration: duration,
+                    expiresAt: expiresAt,
+                    proof: proofData.data
+                });
+            } catch (error) {
+                console.error(`Failed to mute ${target.user?.tag || target.id}:`, error);
+                results.failed.push({ user: target.user, reason: error.message });
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor('#ffa500')
+            .setTitle('🔇 Mute Results')
+            .setTimestamp()
+            .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
+
+        if (results.successful.length > 0) {
+            embed.addFields({
+                name: `Muted (${results.successful.length})`,
+                value: results.successful.map(r =>
+                    `✅ **${r.user.tag}** (${r.user.id})\n   └ Expires: <t:${Math.floor(r.expiresAt.getTime() / 1000)}:R>`
+                ).join('\n'),
+                inline: false
+            });
+        }
+
+        if (results.failed.length > 0) {
+            embed.addFields({
+                name: `Failed (${results.failed.length})`,
+                value: results.failed.map(r => `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`).join('\n'),
+                inline: false
+            });
+        }
+
+        const details = [
+            `**Reason:** ${options.reason}`,
+            `**Duration:** ${formatDuration(duration)}`,
+            `**Expires:** <t:${Math.floor(expiresAt.getTime() / 1000)}:F>`
+        ];
+
+        if (proofData.data) {
+            details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
+        }
+
+        embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
+
+        if (proofData.data?.type === 'file' && proofData.data.isImage) {
+            embed.setImage(proofData.data.url);
+        }
+
+        const reply = { embeds: [embed] };
+        return isInteraction ? context.editReply(reply) : context.reply(reply);
+    }
+};
+
+function formatProofDisplay(proofData) {
+    if (!proofData) return 'None';
+    if (proofData.type === 'file') {
+        const emoji = proofData.isImage ? '🖼️' : '📄';
+        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
+    } else if (proofData.type === 'url') {
+        return `🔗 [View Evidence](${proofData.url})`;
+    }
+    return 'None';
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}

@@ -69,14 +69,14 @@ async function handleProofData(proofUrl, proofFile) {
         }
 
         if (!allowedTypes.includes(proofFile.contentType)) {
-            return { 
-                data: null, 
-                error: `File type not allowed. Allowed types: ${allowedTypes.join(', ')}` 
+            return {
+                data: null,
+                error: `File type not allowed. Allowed types: ${allowedTypes.join(', ')}`
             };
         }
 
         const isImage = proofFile.contentType.startsWith('image/');
-        
+
         return {
             data: {
                 type: 'file',
@@ -96,7 +96,7 @@ async function handleProofData(proofUrl, proofFile) {
         try {
             const url = new URL(proofUrl);
             const allowedProtocols = ['http:', 'https:'];
-            
+
             if (!allowedProtocols.includes(url.protocol)) {
                 return { data: null, error: 'Only HTTP and HTTPS URLs are allowed' };
             }
@@ -135,10 +135,7 @@ async function sendDM(user, options) {
                     embed.addFields({ name: 'Duration', value: options.duration, inline: true });
                 }
                 if (options.proof) {
-                    const proofDisplay = formatProofForDM(options.proof);
-                    embed.addFields({ name: 'Evidence', value: proofDisplay, inline: false });
-                    
-                    // Add image if it's an image file
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
                     if (options.proof.type === 'file' && options.proof.isImage) {
                         embed.setImage(options.proof.url);
                     }
@@ -154,6 +151,65 @@ async function sendDM(user, options) {
                         { name: 'Moderator', value: options.moderator, inline: true }
                     );
                 break;
+
+            case 'kick':
+                embed.setColor('#ff6600')
+                    .setTitle('👢 You have been kicked')
+                    .setDescription(`You have been kicked from **${options.guild}**`)
+                    .addFields(
+                        { name: 'Reason', value: options.reason, inline: false },
+                        { name: 'Moderator', value: options.moderator, inline: true }
+                    );
+                if (options.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                    if (options.proof.type === 'file' && options.proof.isImage) {
+                        embed.setImage(options.proof.url);
+                    }
+                }
+                break;
+
+            case 'mute':
+                embed.setColor('#ffa500')
+                    .setTitle('🔇 You have been muted')
+                    .setDescription(`You have been timed out in **${options.guild}**`)
+                    .addFields(
+                        { name: 'Reason', value: options.reason, inline: false },
+                        { name: 'Duration', value: options.duration || 'Unknown', inline: true },
+                        { name: 'Moderator', value: options.moderator, inline: true }
+                    );
+                if (options.expiresAt) {
+                    embed.addFields({
+                        name: 'Expires',
+                        value: `<t:${Math.floor(options.expiresAt.getTime() / 1000)}:F>`,
+                        inline: false
+                    });
+                }
+                if (options.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                    if (options.proof.type === 'file' && options.proof.isImage) {
+                        embed.setImage(options.proof.url);
+                    }
+                }
+                break;
+
+            case 'unmute':
+                embed.setColor('#00ff99')
+                    .setTitle('🔊 You have been unmuted')
+                    .setDescription(`Your timeout has been removed in **${options.guild}**`)
+                    .addFields(
+                        { name: 'Reason', value: options.reason, inline: false },
+                        { name: 'Moderator', value: options.moderator, inline: true }
+                    );
+                if (options.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                    if (options.proof.type === 'file' && options.proof.isImage) {
+                        embed.setImage(options.proof.url);
+                    }
+                }
+                break;
+
+            default:
+                return;
         }
 
         await user.send({ embeds: [embed] });
@@ -164,10 +220,8 @@ async function sendDM(user, options) {
 
 async function logModeration(guild, action) {
     try {
-        // Use specific mod-logs channel ID
         let logChannel = guild.channels.cache.get(MOD_LOGS_CHANNEL_ID);
 
-        // Fallback to name search if channel not found
         if (!logChannel) {
             console.warn(`Mod-logs channel (${MOD_LOGS_CHANNEL_ID}) not found, searching by name as fallback...`);
             logChannel = guild.channels.cache.find(channel =>
@@ -178,7 +232,6 @@ async function logModeration(guild, action) {
             );
         }
 
-        // Check if channel exists and is text-based
         if (!logChannel) {
             console.warn('No mod-logs channel found, skipping moderation log...');
             return;
@@ -212,10 +265,7 @@ async function logModeration(guild, action) {
                     embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
                 }
                 if (action.proof) {
-                    const proofDisplay = formatProofForLog(action.proof);
-                    embed.addFields({ name: 'Evidence', value: proofDisplay, inline: false });
-                    
-                    // Add image thumbnail for log
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
                     if (action.proof.type === 'file' && action.proof.isImage) {
                         embed.setThumbnail(action.proof.url);
                     }
@@ -234,9 +284,7 @@ async function logModeration(guild, action) {
                     embed.addFields({ name: 'Messages Deleted', value: `${action.purge_days} days`, inline: true });
                 }
                 if (action.proof) {
-                    const proofDisplay = formatProofForLog(action.proof);
-                    embed.addFields({ name: 'Evidence', value: proofDisplay, inline: false });
-                    
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
                     if (action.proof.type === 'file' && action.proof.isImage) {
                         embed.setThumbnail(action.proof.url);
                     }
@@ -251,6 +299,62 @@ async function logModeration(guild, action) {
                         { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
                         { name: 'Reason', value: action.reason, inline: false }
                     );
+                break;
+
+            case 'kick':
+                embed.setColor('#ff6600')
+                    .setTitle('👢 Member Kicked')
+                    .addFields(
+                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
+                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
+                        { name: 'Reason', value: action.reason, inline: false }
+                    );
+                if (action.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
+                    if (action.proof.type === 'file' && action.proof.isImage) {
+                        embed.setThumbnail(action.proof.url);
+                    }
+                }
+                break;
+
+            case 'mute':
+                embed.setColor('#ffa500')
+                    .setTitle('🔇 Member Muted')
+                    .addFields(
+                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
+                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
+                        { name: 'Reason', value: action.reason, inline: false },
+                        { name: 'Duration', value: action.duration || 'Unknown', inline: true }
+                    );
+                if (action.expiresAt) {
+                    embed.addFields({
+                        name: 'Expires',
+                        value: `<t:${Math.floor(action.expiresAt.getTime() / 1000)}:F>`,
+                        inline: true
+                    });
+                }
+                if (action.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
+                    if (action.proof.type === 'file' && action.proof.isImage) {
+                        embed.setThumbnail(action.proof.url);
+                    }
+                }
+                break;
+
+            case 'unmute':
+                embed.setColor('#00ff99')
+                    .setTitle('🔊 Member Unmuted')
+                    .addFields(
+                        { name: 'User', value: `${action.target.tag} (${action.target.id})`, inline: true },
+                        { name: 'Moderator', value: `${action.moderator.tag} (${action.moderator.id})`, inline: true },
+                        { name: 'Reason', value: action.reason, inline: false }
+                    );
+                if (action.proof) {
+                    embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false });
+                    if (action.proof.type === 'file' && action.proof.isImage) {
+                        embed.setThumbnail(action.proof.url);
+                    }
+                }
                 break;
         }
 
@@ -299,20 +403,17 @@ async function parseMembers(guild, input, allowHackBan = false) {
 // Helper functions for proof formatting
 function formatProofForDM(proofData) {
     if (!proofData) return 'None provided';
-    
     if (proofData.type === 'file') {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         return `${emoji} **${proofData.filename}**\n[Download](${proofData.url})`;
     } else if (proofData.type === 'url') {
         return `🔗 [View Evidence](${proofData.url})`;
     }
-    
     return 'None provided';
 }
 
 function formatProofForLog(proofData) {
     if (!proofData) return 'None provided';
-    
     if (proofData.type === 'file') {
         const emoji = proofData.isImage ? '🖼️' : '📄';
         const size = formatFileSize(proofData.size);
@@ -320,7 +421,6 @@ function formatProofForLog(proofData) {
     } else if (proofData.type === 'url') {
         return `🔗 [View Evidence](${proofData.url})\nDomain: ${proofData.domain}\nAdded: <t:${Math.floor(new Date(proofData.addedAt).getTime() / 1000)}:R>`;
     }
-    
     return 'None provided';
 }
 
@@ -332,7 +432,6 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Export all functions
 module.exports = {
     canModerate,
     validatePermissions,
