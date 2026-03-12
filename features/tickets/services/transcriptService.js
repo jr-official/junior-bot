@@ -1,24 +1,52 @@
 // features/tickets/services/transcriptService.js
 //
-// Key fixes vs the original:
+// Fixes vs previous version:
 //
-// 1. Image base64 is now actually used — the <img src> is set to the data URI
-//    so images survive Discord CDN link expiry.
+// 1. Image downloads are now concurrency-limited (max 5 simultaneous fetches)
+//    so a ticket with many images cannot exhaust memory or hit CDN rate limits.
 //
-// 2. ticketMetadata is no longer a private map that was never populated.
-//    generateTranscript now accepts an optional `metadata` argument that callers
-//    pass in from TicketService.ticketMetadata.  The old private map is kept as
-//    a fallback so nothing breaks if callers don't supply it.
+// 2. ticketMetadata is accepted as an optional external argument from the caller
+//    (TicketService.ticketMetadata) with the private map kept as a fallback.
 
 const { Buffer } = require('buffer');
 const { EmbedBuilder } = require('discord.js');
 const htmlUtils = require('../utils/htmlUtils');
 const CONFIG    = require('../config/config');
 
+// Maximum simultaneous image downloads per transcript generation
+const IMAGE_DOWNLOAD_CONCURRENCY = 5;
+
+/**
+ * Runs an array of async tasks with a maximum concurrency limit.
+ * @param {Array<() => Promise<any>>} tasks
+ * @param {number} limit
+ * @returns {Promise<Array<any>>}
+ */
+async function runWithConcurrencyLimit(tasks, limit) {
+    const results  = new Array(tasks.length);
+    const iterator = tasks.entries();
+    let done       = false;
+
+    async function worker() {
+        while (!done) {
+            const next = iterator.next();
+            if (next.done) { done = true; return; }
+            const [index, task] = next.value;
+            try {
+                results[index] = await task();
+            } catch (err) {
+                results[index] = null;
+            }
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+    return results;
+}
+
 class TranscriptService {
     constructor(ticketTypes) {
-        this.TICKET_TYPES = ticketTypes;
-        // Kept for backward-compat but no longer the primary source of truth
+        this.TICKET_TYPES   = ticketTypes;
         this._localMetadata = new Map();
     }
 
@@ -84,8 +112,8 @@ class TranscriptService {
 
     /**
      * @param {import('discord.js').TextChannel} channel
-     * @param {object} ticketCreator   – Discord User object (or plain { username, discriminator })
-     * @param {Map}    [externalMetadata] – TicketService.ticketMetadata, passed in by the caller
+     * @param {object} ticketCreator      – Discord User object
+     * @param {Map}    [externalMetadata] – TicketService.ticketMetadata
      */
     async generateTranscript(channel, ticketCreator, externalMetadata) {
         if (!channel?.messages) {
@@ -94,7 +122,7 @@ class TranscriptService {
         }
 
         try {
-            // Fetch all messages ───────────────────────────────────────────────
+            // ── Fetch all messages ────────────────────────────────────────────
             const messages = [];
             let lastMessageId;
             let requestCount = 0;
@@ -120,12 +148,36 @@ class TranscriptService {
 
             messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-            // Resolve metadata ─────────────────────────────────────────────────
-            // Priority: caller-supplied external map → local fallback map → channel name
+            // ── Pre-download all images with concurrency limit ────────────────
+            // Collect every image attachment URL in order so we can resolve them
+            // all up-front (bounded concurrency) before building the HTML string.
+            const imageAttachments = []; // { messageId, attachmentId, url }
+            for (const message of messages) {
+                for (const attachment of message.attachments.values()) {
+                    if (this.isImageAttachment(attachment)) {
+                        imageAttachments.push({
+                            messageId:    message.id,
+                            attachmentId: attachment.id,
+                            url:          attachment.url
+                        });
+                    }
+                }
+            }
+
+            const downloadTasks  = imageAttachments.map(a => () => this.downloadAndEncodeImage(a.url));
+            const downloadedUris = await runWithConcurrencyLimit(downloadTasks, IMAGE_DOWNLOAD_CONCURRENCY);
+
+            // Build a lookup: attachmentId → data URI (or null if download failed)
+            const imageDataUris = new Map();
+            for (let i = 0; i < imageAttachments.length; i++) {
+                imageDataUris.set(imageAttachments[i].attachmentId, downloadedUris[i]);
+            }
+
+            // ── Resolve metadata ──────────────────────────────────────────────
             const metaMap  = externalMetadata || this._localMetadata;
             const metadata = metaMap.get(channel.id) || {};
 
-            const ticketType = metadata.type     || channel.name.split('-')[0];
+            const ticketType = metadata.type    || channel.name.split('-')[0];
             const createdAt  = new Date(metadata.createdAt || channel.createdTimestamp);
             const closedAt   = new Date();
 
@@ -134,7 +186,7 @@ class TranscriptService {
                 discriminator: ticketCreator?.discriminator || '0000'
             };
 
-            // Build HTML ───────────────────────────────────────────────────────
+            // ── Build HTML ────────────────────────────────────────────────────
             let html = `<!DOCTYPE html>
 <html>
 <head>
@@ -234,9 +286,9 @@ class TranscriptService {
 
             // ── Per-message rendering ─────────────────────────────────────────
             for (const message of messages) {
-                const timestamp    = new Date(message.createdTimestamp).toLocaleString();
-                const isBot        = message.author.bot;
-                const avatarUrl    = this.getUserAvatarUrl(message.author);
+                const timestamp     = new Date(message.createdTimestamp).toLocaleString();
+                const isBot         = message.author.bot;
+                const avatarUrl     = this.getUserAvatarUrl(message.author);
                 const avatarInitial = message.author.username.charAt(0).toUpperCase();
 
                 html += `
@@ -319,11 +371,10 @@ class TranscriptService {
                     html += `</div>`;
                 }
 
-                // Attachments
+                // Attachments — images use the pre-downloaded data URI
                 for (const attachment of message.attachments.values()) {
                     if (this.isImageAttachment(attachment)) {
-                        // FIX: download and embed as base64 so the image survives CDN link expiry
-                        const dataUri = await this.downloadAndEncodeImage(attachment.url);
+                        const dataUri = imageDataUris.get(attachment.id);
                         if (dataUri) {
                             html += `<div class="image-attachment">
                                 <img src="${dataUri}" alt="${htmlUtils.sanitize(attachment.name)}"
@@ -336,7 +387,6 @@ class TranscriptService {
                                 </div>
                             </div>`;
                         } else {
-                            // Download failed — fall back to external URL with a warning note
                             html += `<div class="file-attachment">
                                 <div class="file-details">
                                     <div><span class="file-icon">🖼️</span><span class="file-name">⚠️ Image (may expire): ${htmlUtils.sanitize(attachment.name)}</span></div>

@@ -1,4 +1,4 @@
-// handlers/ticketCreationHandler.js
+// features/tickets/handlers/ticketCreationHandler.js
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
 
 async function handleTicketCreation(interaction, helpers, services, CONFIG, TICKET_TYPES, timeout) {
@@ -11,26 +11,24 @@ async function handleTicketCreation(interaction, helpers, services, CONFIG, TICK
         return true;
     }
 
-    const ticketType = interaction.values[0];
+    const ticketType   = interaction.values[0];
     const ticketConfig = TICKET_TYPES[ticketType];
 
     if (!ticketConfig) {
         clearTimeout(timeout);
-        await safeReply(interaction, {
-            content: '❌ Invalid ticket type selected.'
-        });
+        await safeReply(interaction, { content: '❌ Invalid ticket type selected.' });
         return true;
     }
 
     if (ticketService.isUserOnCooldown(interaction.user.id, CONFIG.TICKET_CREATE_COOLDOWN)) {
         clearTimeout(timeout);
-        await safeReply(interaction, {
-            content: '⏰ Please wait before creating another ticket.'
-        });
+        await safeReply(interaction, { content: '⏰ Please wait before creating another ticket.' });
         return true;
     }
 
-    if (!ticketService.canUserCreateTicket(interaction.user.id, CONFIG.MAX_TICKETS_PER_USER)) {
+    // canUserCreateTicket is now async (queries the DB) so we must await it
+    const canCreate = await ticketService.canUserCreateTicket(interaction.user.id, CONFIG.MAX_TICKETS_PER_USER);
+    if (!canCreate) {
         clearTimeout(timeout);
         await safeReply(interaction, {
             content: `❌ You already have the maximum number of tickets (${CONFIG.MAX_TICKETS_PER_USER}) open.`
@@ -75,8 +73,8 @@ async function handleTicketCreation(interaction, helpers, services, CONFIG, TICK
         const row = new ActionRowBuilder().addComponents(closeButton);
 
         await ticketChannel.send({
-            content: `${interaction.user} | ${staffRole}`,
-            embeds: [ticketEmbed],
+            content:    `${interaction.user} | ${staffRole}`,
+            embeds:     [ticketEmbed],
             components: [row]
         });
 

@@ -1,6 +1,9 @@
 // features/moderation/moderation.js
 const { Collection, Events } = require('discord.js');
-const { createHash } = require('crypto');
+const { createHash }  = require('crypto');
+const { readFileSync, writeFileSync, mkdirSync } = require('fs');
+const { join }        = require('path');
+
 const slashCommandHandler  = require('./handlers/slashCommandHandler');
 const prefixCommandHandler = require('./handlers/prefixCommandHandler');
 const banCommand    = require('./commands/ban');
@@ -16,30 +19,49 @@ const warningService = require('./services/warningService');
 
 const PREFIX = '!';
 
-// ─── Command hash helpers ─────────────────────────────────────────────────────
-// We hash the serialised command definitions and store the hash in the bot's
-// presence activity (or a simple in-memory variable).  On every boot we compare
-// the current definitions against the last-registered hash so we only hit the
-// Discord API when something genuinely changed.
-//
-// For a single-server bot, the fast path is: no change → skip registration.
+// ─── Persistent command-hash helpers ─────────────────────────────────────────
+// We persist the hash of registered slash-command definitions to a small file
+// so that bot restarts skip re-registration when nothing has changed.
+// Discord's global command registration is rate-limited and propagation can
+// take up to an hour, so avoiding unnecessary calls is worthwhile.
 
-let _lastCommandHash = null;
+const HASH_DIR  = join(__dirname, '../../.cache');
+const HASH_FILE = join(HASH_DIR, 'slash-command-hash.txt');
+
+function readPersistedHash() {
+    try {
+        return readFileSync(HASH_FILE, 'utf8').trim();
+    } catch {
+        return null; // File doesn't exist yet on first run
+    }
+}
+
+function writePersistedHash(hash) {
+    try {
+        mkdirSync(HASH_DIR, { recursive: true });
+        writeFileSync(HASH_FILE, hash, 'utf8');
+    } catch (err) {
+        // Non-fatal — worst case we re-register on the next restart
+        console.warn('⚠️  Could not persist command hash:', err.message);
+    }
+}
 
 function hashCommands(commandsJson) {
     return createHash('sha256').update(JSON.stringify(commandsJson)).digest('hex');
 }
 
 async function registerCommandsIfChanged(client, commands) {
-    const currentHash = hashCommands(commands);
-    if (_lastCommandHash === currentHash) {
+    const currentHash  = hashCommands(commands);
+    const persistedHash = readPersistedHash();
+
+    if (persistedHash === currentHash) {
         console.log('✅ Slash commands unchanged — skipping re-registration');
         return;
     }
 
     console.log('🔨 Registering moderation slash commands globally...');
     await client.application.commands.set(commands);
-    _lastCommandHash = currentHash;
+    writePersistedHash(currentHash);
     console.log('✅ Moderation slash commands registered globally');
     console.log('📝 Note: Global commands may take up to 1 hour to appear in all servers');
 }
@@ -55,7 +77,6 @@ module.exports = (client) => {
     client.moderationCommands.set('warn',   warnCommand);
     client.moderationCommands.set('warns',  warnsCommand);
 
-    // Register slash commands only when definitions have changed
     client.once(Events.ClientReady, async () => {
         try {
             const commands = [];

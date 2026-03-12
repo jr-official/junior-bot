@@ -91,7 +91,6 @@ module.exports = {
 
     async executeWarnAdd(context, options) {
         const guild = context.guild;
-        // FIX: use the same moderator fallback pattern as every other command
         const moderator     = context.member || context.author;
         const moderatorUser = moderator.user ?? moderator;
         const isInteraction = context.replied !== undefined;
@@ -210,8 +209,8 @@ module.exports = {
 };
 
 // ─── Button handler (exported separately) ────────────────────────────────────
-// formatProofDisplay is explicitly imported here so this function has no hidden
-// dependency on the outer module scope.
+// formatProofDisplay is explicitly imported at the top of this file via
+// require('../utils/moderationUtils') — no hidden closure dependency.
 async function handleWarnRemoveButton(interaction, guild) {
     const id = interaction.customId;
 
@@ -258,10 +257,31 @@ async function handleWarnRemoveButton(interaction, guild) {
         try { targetUser = await interaction.client.users.fetch(userId); }
         catch { targetUser = { tag: removed.username, id: userId, displayAvatarURL: () => null }; }
 
-        const remaining    = await warningService.getUserWarningCount(guild.id, userId);
-        const ts           = Math.floor(new Date(removed.createdAt).getTime() / 1000);
+        const remaining     = await warningService.getUserWarningCount(guild.id, userId);
+        const ts            = Math.floor(new Date(removed.createdAt).getTime() / 1000);
         const removedCaseId = removed.caseId || 'N/A';
         const removalCaseId = generateCaseId('warn_remove');
+
+        // ── Notify the user via DM that their warning was removed ────────────
+        // Only attempt if we have a real User object (fetch succeeded).
+        if (targetUser && typeof targetUser.send === 'function') {
+            try {
+                await sendDM(targetUser, {
+                    type:           'warn_remove',
+                    guild:          guild.name,
+                    reason:         'Removed via warning picker',
+                    originalReason: removed.reason,
+                    moderatorTag:   interaction.user.tag,
+                    moderatorId:    interaction.user.id,
+                    caseId:         removalCaseId,
+                    remaining,
+                    proof:          null
+                });
+            } catch (dmErr) {
+                // Non-fatal — log and continue
+                console.error(`Failed to DM warn_remove to ${targetUser.tag}:`, dmErr);
+            }
+        }
 
         const confirmEmbed = new EmbedBuilder()
             .setColor('#00ccff').setTitle('🗑️ Warning Removed')
