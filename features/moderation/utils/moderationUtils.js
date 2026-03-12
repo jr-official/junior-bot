@@ -1,8 +1,7 @@
 // features/moderation/utils/moderationUtils.js
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { generateCaseId } = require('./caseID');
-
-const MOD_LOGS_CHANNEL_ID = '1385991704670244915';
+const { MOD_LOGS_CHANNEL_ID } = require('../config/moderationConfig');
 
 async function canModerate(moderator, target) {
     try {
@@ -77,6 +76,41 @@ async function handleProofData(proofUrl, proofFile) {
     }
 
     return { data: null, error: null };
+}
+
+// ─── Shared proof/file formatting helpers ────────────────────────────────────
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatProofDisplay(proofData) {
+    if (!proofData) return 'None';
+    if (proofData.type === 'file') {
+        const emoji = proofData.isImage ? '🖼️' : '📄';
+        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
+    }
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
+    return 'None';
+}
+
+function formatProofForDM(proofData) {
+    if (!proofData) return 'None provided';
+    if (proofData.type === 'file') return `${proofData.isImage ? '🖼️' : '📄'} **${proofData.filename}**\n[Download](${proofData.url})`;
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
+    return 'None provided';
+}
+
+function formatProofForLog(proofData) {
+    if (!proofData) return 'None provided';
+    if (proofData.type === 'file') {
+        const size = formatFileSize(proofData.size);
+        return `${proofData.isImage ? '🖼️' : '📄'} **${proofData.filename}** (${size})\n[View File](${proofData.url})\nUploaded: <t:${Math.floor(new Date(proofData.uploadedAt).getTime() / 1000)}:R>`;
+    }
+    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})\nDomain: ${proofData.domain}\nAdded: <t:${Math.floor(new Date(proofData.addedAt).getTime() / 1000)}:R>`;
+    return 'None provided';
 }
 
 function formatModeratorField(tagOrUser, id) {
@@ -203,8 +237,6 @@ async function sendDM(user, options) {
 }
 
 // ─── logModeration ───────────────────────────────────────────────────────────
-// Accepts action.caseId when the caller pre-generates it (e.g. warns).
-// Returns the caseId used so callers can display it.
 async function logModeration(guild, action) {
     const caseId = action.caseId || generateCaseId(action.type);
 
@@ -271,11 +303,11 @@ async function logModeration(guild, action) {
 
             case 'mute':
                 embed.setColor('#ffa500').setTitle('🔇 Member Muted').addFields(
-                    { name: 'Case ID',   value: caseId,                      inline: true  },
-                    { name: 'User',      value: targetValue,                 inline: true  },
-                    { name: 'Moderator', value: modValue,                    inline: true  },
-                    { name: 'Reason',    value: action.reason,               inline: false },
-                    { name: 'Duration',  value: action.duration || 'Unknown', inline: true }
+                    { name: 'Case ID',   value: caseId,                       inline: true  },
+                    { name: 'User',      value: targetValue,                  inline: true  },
+                    { name: 'Moderator', value: modValue,                     inline: true  },
+                    { name: 'Reason',    value: action.reason,                inline: false },
+                    { name: 'Duration',  value: action.duration || 'Unknown', inline: true  }
                 );
                 if (action.expiresAt) embed.addFields({ name: 'Expires', value: `<t:${Math.floor(action.expiresAt.getTime()/1000)}:F>`, inline: true });
                 if (action.proof) { embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false }); if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url); }
@@ -354,28 +386,15 @@ async function parseMembers(guild, input, allowHackBan = false) {
     return { success: true, targets };
 }
 
-function formatProofForDM(proofData) {
-    if (!proofData) return 'None provided';
-    if (proofData.type === 'file') return `${proofData.isImage ? '🖼️' : '📄'} **${proofData.filename}**\n[Download](${proofData.url})`;
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
-    return 'None provided';
-}
-
-function formatProofForLog(proofData) {
-    if (!proofData) return 'None provided';
-    if (proofData.type === 'file') {
-        const size = formatFileSize(proofData.size);
-        return `${proofData.isImage ? '🖼️' : '📄'} **${proofData.filename}** (${size})\n[View File](${proofData.url})\nUploaded: <t:${Math.floor(new Date(proofData.uploadedAt).getTime()/1000)}:R>`;
-    }
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})\nDomain: ${proofData.domain}\nAdded: <t:${Math.floor(new Date(proofData.addedAt).getTime()/1000)}:R>`;
-    return 'None provided';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-module.exports = { canModerate, validatePermissions, sendDM, logModeration, parseMembers, handleProofData, formatProofForDM, formatProofForLog };
+module.exports = {
+    canModerate,
+    validatePermissions,
+    sendDM,
+    logModeration,
+    parseMembers,
+    handleProofData,
+    formatProofDisplay,
+    formatProofForDM,
+    formatProofForLog,
+    formatFileSize
+};

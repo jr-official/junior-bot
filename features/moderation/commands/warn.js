@@ -4,7 +4,10 @@ const {
     ActionRowBuilder, ButtonBuilder, ButtonStyle
 } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
-const { canModerate, sendDM, logModeration, parseMembers, handleProofData } = require('../utils/moderationUtils');
+const {
+    canModerate, sendDM, logModeration,
+    parseMembers, handleProofData, formatProofDisplay
+} = require('../utils/moderationUtils');
 const { generateCaseId } = require('../utils/caseID');
 const warningService = require('../services/warningService');
 
@@ -21,7 +24,7 @@ module.exports = {
         .addSubcommand(sub =>
             sub.setName('add')
                 .setDescription('Issue a warning to one or multiple members')
-                .addStringOption(opt => opt.setName('user').setDescription('User(s) to warn (mention or ID, space-separated for multiple)').setRequired(true))
+                .addStringOption(opt => opt.setName('user').setDescription('User(s) to warn').setRequired(true))
                 .addStringOption(opt => opt.setName('reason').setDescription('Reason for the warning').setRequired(true))
                 .addBooleanOption(opt => opt.setName('dm').setDescription('Send DM to user (default: true)').setRequired(false))
                 .addStringOption(opt => opt.setName('proof_url').setDescription('Evidence/proof URL').setRequired(false))
@@ -54,9 +57,7 @@ module.exports = {
             return message.reply('❌ **Usage:**\n`!warn <user> <reason> [options]` — Issue a warning\n`!warn remove <user>` — Open removal picker\n**Options:** `--no-dm`, `--proof=<url>`');
         }
 
-        const isRemove = args[0].toLowerCase() === 'remove';
-
-        if (isRemove) {
+        if (args[0].toLowerCase() === 'remove') {
             if (!args[1]) return message.reply('❌ You must provide a user.');
             let userId = args[1];
             if (userId.match(/^<@!?(\d+)>$/)) userId = userId.match(/^<@!?(\d+)>$/)[1];
@@ -83,7 +84,6 @@ module.exports = {
         await this.executeWarnAdd(message, options);
     },
 
-    // ─── WARN ADD ─────────────────────────────────────────────────────────────
     async executeWarnAdd(context, options) {
         const guild = context.guild;
         const moderator = context.member;
@@ -112,7 +112,6 @@ module.exports = {
                 const canMod = await canModerate(moderator, target.member);
                 if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
 
-                // Insert warning first to get the caseId
                 const warning = await warningService.addWarning(guild.id, target.user, moderator.user, options.reason, proofData.data, false);
                 const caseId = warning.caseId;
                 const totalWarnings = await warningService.getUserWarningCount(guild.id, target.user.id);
@@ -126,7 +125,8 @@ module.exports = {
                             proof: proofData.data, caseId
                         });
                         dmSent = true;
-                        await warningService._col().updateOne({ _id: warning._id }, { $set: { dmSent: true } });
+                        // FIX: use dedicated service method instead of accessing _col() directly
+                        await warningService.markDmSent(warning._id, true);
                     } catch { dmSent = false; }
                 }
 
@@ -167,7 +167,6 @@ module.exports = {
         return isInteraction ? context.editReply({ embeds: [embed] }) : context.reply({ embeds: [embed] });
     },
 
-    // ─── WARN REMOVE PICKER ───────────────────────────────────────────────────
     async executeWarnRemovePicker(interaction, targetUser, page) {
         await interaction.deferReply();
         const warnings = await warningService.getUserWarnings(interaction.guild.id, targetUser.id);
@@ -181,11 +180,9 @@ module.exports = {
     }
 };
 
-// ─── BUTTON HANDLER ──────────────────────────────────────────────────────────
 async function handleWarnRemoveButton(interaction, guild) {
     const id = interaction.customId;
 
-    // Pagination
     const pageMatch = id.match(/^warnrm_page_(\d+)_(\d+)$/);
     if (pageMatch) {
         const userId = pageMatch[1];
@@ -204,7 +201,6 @@ async function handleWarnRemoveButton(interaction, guild) {
         return interaction.editReply({ embeds: [embed], components });
     }
 
-    // Remove
     const removeMatch = id.match(/^warnrm_do_([a-f0-9]{24})_(\d+)$/);
     if (removeMatch) {
         const warningMongoId = removeMatch[1];
@@ -229,13 +225,13 @@ async function handleWarnRemoveButton(interaction, guild) {
             .setColor('#00ccff').setTitle('🗑️ Warning Removed')
             .setDescription(`A warning has been removed from **${targetUser.tag}** (${userId}).`)
             .addFields(
-                { name: 'Removal Case ID',        value: removalCaseId,                                    inline: true  },
-                { name: 'Removed Warning ID',     value: removedCaseId,                                    inline: true  },
-                { name: 'Removed Warning Reason', value: removed.reason,                                   inline: false },
+                { name: 'Removal Case ID',        value: removalCaseId,                                        inline: true  },
+                { name: 'Removed Warning ID',     value: removedCaseId,                                        inline: true  },
+                { name: 'Removed Warning Reason', value: removed.reason,                                       inline: false },
                 { name: 'Originally Issued By',   value: `<@${removed.moderatorId}> (${removed.moderatorId})`, inline: true  },
-                { name: 'Originally Issued',      value: `<t:${ts}:F>`,                                   inline: true  },
-                { name: 'DM was sent',            value: removed.dmSent ? '✅ Yes' : '❌ No',              inline: true  },
-                { name: 'Remaining Warnings',     value: `${remaining}`,                                   inline: true  }
+                { name: 'Originally Issued',      value: `<t:${ts}:F>`,                                        inline: true  },
+                { name: 'DM was sent',            value: removed.dmSent ? '✅ Yes' : '❌ No',                  inline: true  },
+                { name: 'Remaining Warnings',     value: `${remaining}`,                                       inline: true  }
             )
             .setTimestamp()
             .setFooter({ text: `Removed by ${interaction.user.tag} • Case ${removalCaseId}`, iconURL: interaction.user.displayAvatarURL() });
@@ -261,7 +257,6 @@ async function handleWarnRemoveButton(interaction, guild) {
     return false;
 }
 
-// ─── PICKER BUILDER ───────────────────────────────────────────────────────────
 function buildRemovePickerPage(targetUser, warnings, page) {
     const totalPages = Math.max(1, Math.ceil(warnings.length / REMOVE_PAGE_SIZE));
     const start = page * REMOVE_PAGE_SIZE;
@@ -292,8 +287,6 @@ function buildRemovePickerPage(targetUser, warnings, page) {
     }
 
     const rows = [];
-
-    // One remove button per warning on this page — label shows the case ID
     rows.push(new ActionRowBuilder().addComponents(
         slice.map(w => {
             const label = w.caseId || w._id.toString().slice(-6).toUpperCase();
@@ -317,20 +310,6 @@ function buildRemovePickerPage(targetUser, warnings, page) {
     }
 
     return { embed, components: rows };
-}
-
-function formatProofDisplay(proofData) {
-    if (!proofData) return 'None';
-    if (proofData.type === 'file') return `${proofData.isImage ? '🖼️' : '📄'} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
-    return 'None';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 module.exports.handleWarnRemoveButton = handleWarnRemoveButton;

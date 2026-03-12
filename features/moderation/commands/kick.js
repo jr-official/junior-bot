@@ -2,11 +2,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
 const {
-    canModerate,
-    sendDM,
-    logModeration,
-    parseMembers,
-    handleProofData
+    canModerate, sendDM, logModeration,
+    parseMembers, handleProofData, formatProofDisplay
 } = require('../utils/moderationUtils');
 const { generateCaseId } = require('../utils/caseID');
 
@@ -54,26 +51,20 @@ module.exports = {
         if (args.length < 2) {
             return message.reply(
                 '❌ **Usage:** `!kick <user> <reason> [options]`\n' +
-                '**Options:**\n' +
-                '`--no-dm` - Don\'t send DM to user\n' +
-                '`--proof=<url>` - Evidence URL\n' +
+                '**Options:** `--no-dm`, `--proof=<url>`\n' +
                 '**Example:** `!kick @user Breaking rules`'
             );
         }
 
         const options = { users: args[0], reason: '', dm: true, proof_url: null, proof_file: null };
         const reasonParts = [];
-
         for (let i = 1; i < args.length; i++) {
-            const arg = args[i];
-            if (arg === '--no-dm') options.dm = false;
-            else if (arg.startsWith('--proof=')) options.proof_url = arg.split('=')[1];
-            else reasonParts.push(arg);
+            if (args[i] === '--no-dm') options.dm = false;
+            else if (args[i].startsWith('--proof=')) options.proof_url = args[i].split('=')[1];
+            else reasonParts.push(args[i]);
         }
-
         options.reason = reasonParts.join(' ');
         if (!options.reason) return message.reply('❌ **Error:** Reason is required.');
-
         await this.executeKick(message, options);
     },
 
@@ -101,16 +92,10 @@ module.exports = {
 
         for (const target of memberResult.targets) {
             try {
-                if (!target.member) {
-                    results.failed.push({ user: target.user, reason: 'User is not in the server.' });
-                    continue;
-                }
+                if (!target.member) { results.failed.push({ user: target.user, reason: 'User is not in the server.' }); continue; }
 
                 const canMod = await canModerate(moderator, target.member);
-                if (!canMod.success) {
-                    results.failed.push({ user: target.user, reason: canMod.message });
-                    continue;
-                }
+                if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
 
                 if (!target.member.kickable) {
                     results.failed.push({ user: target.user, reason: 'I cannot kick this user (insufficient permissions or role hierarchy).' });
@@ -121,13 +106,9 @@ module.exports = {
 
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
-                        type: 'kick',
-                        guild: guild.name,
-                        reason: options.reason,
-                        moderatorTag: moderator.user.tag,
-                        moderatorId:  moderator.user.id,
-                        proof: proofData.data,
-                        caseId
+                        type: 'kick', guild: guild.name, reason: options.reason,
+                        moderatorTag: moderator.user.tag, moderatorId: moderator.user.id,
+                        proof: proofData.data, caseId
                     });
                 }
 
@@ -135,12 +116,8 @@ module.exports = {
                 results.successful.push({ user: target.user, caseId });
 
                 await logModeration(guild, {
-                    type: 'kick',
-                    caseId,
-                    target: target.user,
-                    moderator: moderator.user,
-                    reason: options.reason,
-                    proof: proofData.data
+                    type: 'kick', caseId, target: target.user,
+                    moderator: moderator.user, reason: options.reason, proof: proofData.data
                 });
             } catch (error) {
                 console.error(`Failed to kick ${target.user?.tag}:`, error);
@@ -149,9 +126,7 @@ module.exports = {
         }
 
         const embed = new EmbedBuilder()
-            .setColor('#ff6600')
-            .setTitle('👢 Kick Results')
-            .setTimestamp()
+            .setColor('#ff6600').setTitle('👢 Kick Results').setTimestamp()
             .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
 
         if (results.successful.length > 0) {
@@ -161,7 +136,6 @@ module.exports = {
                 inline: false
             });
         }
-
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
@@ -173,28 +147,9 @@ module.exports = {
         const details = [`**Reason:** ${options.reason}`];
         if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
-
         if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
     }
 };
-
-function formatProofDisplay(proofData) {
-    if (!proofData) return 'None';
-    if (proofData.type === 'file') {
-        const emoji = proofData.isImage ? '🖼️' : '📄';
-        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
-    }
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
-    return 'None';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}

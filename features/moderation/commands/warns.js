@@ -1,17 +1,14 @@
 // features/moderation/commands/warns.js
 const {
-    SlashCommandBuilder,
-    PermissionFlagsBits,
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle
+    SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder,
+    ActionRowBuilder, ButtonBuilder, ButtonStyle
 } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
 const warningService = require('../services/warningService');
+const { formatProofDisplay } = require('../utils/moderationUtils');
 
-const WARNINGS_PER_PAGE = 5; // entries per page on leaderboard
-const DETAILS_PER_PAGE  = 3; // individual warning entries per page on user view
+const WARNINGS_PER_PAGE = 5;
+const DETAILS_PER_PAGE  = 3;
 
 module.exports = {
     name: 'warns',
@@ -34,7 +31,6 @@ module.exports = {
     async executeSlash(interaction) {
         const targetUser = interaction.options.getUser('user') || null;
         await interaction.deferReply();
-
         if (targetUser) {
             await this.showUserWarnings(interaction, targetUser, 0);
         } else {
@@ -43,84 +39,55 @@ module.exports = {
     },
 
     async executePrefix(message, args) {
-        // !warns view [@user or ID]
         if (!args.length || args[0].toLowerCase() !== 'view') {
             return message.reply('❌ **Usage:** `!warns view [@user]`');
         }
 
         let targetUser = null;
-
         if (args[1]) {
             const idOrMention = args[1];
             let id = null;
-
-            if (/^\d{17,19}$/.test(idOrMention)) {
-                id = idOrMention;
-            } else if (idOrMention.match(/^<@!?(\d+)>$/)) {
-                id = idOrMention.match(/^<@!?(\d+)>$/)[1];
-            }
+            if (/^\d{17,19}$/.test(idOrMention)) id = idOrMention;
+            else if (idOrMention.match(/^<@!?(\d+)>$/)) id = idOrMention.match(/^<@!?(\d+)>$/)[1];
 
             if (id) {
-                try {
-                    targetUser = await message.client.users.fetch(id);
-                } catch {
-                    return message.reply('❌ Could not find that user.');
-                }
+                try { targetUser = await message.client.users.fetch(id); }
+                catch { return message.reply('❌ Could not find that user.'); }
             }
         }
 
-        // For prefix commands we send static pages (no buttons, simpler experience)
         if (targetUser) {
             const warnings = await warningService.getUserWarnings(message.guild.id, targetUser.id);
-            const embed = buildUserWarningsEmbed(targetUser, warnings, 0);
-            return message.reply({ embeds: [embed] });
+            return message.reply({ embeds: [buildUserWarningsEmbed(targetUser, warnings, 0)] });
         } else {
             const leaderboard = await warningService.getGuildLeaderboard(message.guild.id);
-            const embed = buildLeaderboardEmbed(message.guild.name, leaderboard, 0);
-            return message.reply({ embeds: [embed] });
+            return message.reply({ embeds: [buildLeaderboardEmbed(message.guild.name, leaderboard, 0)] });
         }
     },
 
-    // ─── LEADERBOARD ─────────────────────────────────────────────────────────
     async showLeaderboard(interaction, page) {
         const leaderboard = await warningService.getGuildLeaderboard(interaction.guild.id);
         const embed = buildLeaderboardEmbed(interaction.guild.name, leaderboard, page);
         const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
-
         const components = buildPageButtons('warns_lb', page, totalPages);
-
         const payload = { embeds: [embed], components };
-        if (interaction.deferred) {
-            await interaction.editReply(payload);
-        } else {
-            await interaction.update(payload);
-        }
+        interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
     },
 
-    // ─── USER WARNINGS ───────────────────────────────────────────────────────
     async showUserWarnings(interaction, targetUser, page) {
         const warnings = await warningService.getUserWarnings(interaction.guild.id, targetUser.id);
         const embed = buildUserWarningsEmbed(targetUser, warnings, page);
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
-
         const components = buildPageButtons(`warns_user_${targetUser.id}`, page, totalPages);
-
         const payload = { embeds: [embed], components };
-        if (interaction.deferred) {
-            await interaction.editReply(payload);
-        } else {
-            await interaction.update(payload);
-        }
+        interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
     }
 };
 
-// ─── BUTTON INTERACTION HANDLER (exported separately, registered in moderation.js) ───
 async function handleWarnsButton(interaction) {
-    const customId = interaction.customId; // e.g. warns_lb_prev_2 or warns_user_123456789_next_1
-
+    const customId = interaction.customId;
     let match;
 
-    // Leaderboard button: warns_lb_prev|next_<page>
     match = customId.match(/^warns_lb_(prev|next)_(\d+)$/);
     if (match) {
         const page = parseInt(match[2]);
@@ -129,36 +96,26 @@ async function handleWarnsButton(interaction) {
         const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
         const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
         const embed = buildLeaderboardEmbed(interaction.guild.name, leaderboard, clampedPage);
-        const components = buildPageButtons('warns_lb', clampedPage, totalPages);
-        return interaction.editReply({ embeds: [embed], components });
+        return interaction.editReply({ embeds: [embed], components: buildPageButtons('warns_lb', clampedPage, totalPages) });
     }
 
-    // User warnings button: warns_user_<userId>_prev|next_<page>
     match = customId.match(/^warns_user_(\d+)_(prev|next)_(\d+)$/);
     if (match) {
         const userId = match[1];
         const page = parseInt(match[3]);
         await interaction.deferUpdate();
-
         let targetUser;
-        try {
-            targetUser = await interaction.client.users.fetch(userId);
-        } catch {
-            return interaction.editReply({ content: '❌ Could not fetch user.', embeds: [], components: [] });
-        }
-
+        try { targetUser = await interaction.client.users.fetch(userId); }
+        catch { return interaction.editReply({ content: '❌ Could not fetch user.', embeds: [], components: [] }); }
         const warnings = await warningService.getUserWarnings(interaction.guild.id, userId);
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
         const embed = buildUserWarningsEmbed(targetUser, warnings, clampedPage);
-        const components = buildPageButtons(`warns_user_${userId}`, clampedPage, totalPages);
-        return interaction.editReply({ embeds: [embed], components });
+        return interaction.editReply({ embeds: [embed], components: buildPageButtons(`warns_user_${userId}`, clampedPage, totalPages) });
     }
 
-    return false; // not handled
+    return false;
 }
-
-// ─── EMBED BUILDERS ──────────────────────────────────────────────────────────
 
 function buildLeaderboardEmbed(guildName, leaderboard, page) {
     const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
@@ -171,19 +128,13 @@ function buildLeaderboardEmbed(guildName, leaderboard, page) {
         .setTimestamp()
         .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${leaderboard.length} user${leaderboard.length !== 1 ? 's' : ''} with warnings` });
 
-    if (!leaderboard.length) {
-        embed.setDescription('✅ No warnings have been issued in this server.');
-        return embed;
-    }
+    if (!leaderboard.length) { embed.setDescription('✅ No warnings have been issued in this server.'); return embed; }
 
-    const lines = slice.map((entry, i) => {
+    embed.setDescription(slice.map((entry, i) => {
         const rank = start + i + 1;
         const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `**${rank}.**`;
-        const warnWord = entry.count === 1 ? 'warning' : 'warnings';
-        return `${medal} <@${entry.userId}> (${entry.userId}) — **${entry.count}** ${warnWord}`;
-    });
-
-    embed.setDescription(lines.join('\n'));
+        return `${medal} <@${entry.userId}> (${entry.userId}) — **${entry.count}** ${entry.count === 1 ? 'warning' : 'warnings'}`;
+    }).join('\n'));
     return embed;
 }
 
@@ -197,73 +148,36 @@ function buildUserWarningsEmbed(targetUser, warnings, page) {
         .setTitle(`⚠️ Warnings — ${targetUser.tag}`)
         .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
         .setTimestamp()
-        .setFooter({
-            text: `Page ${page + 1} of ${totalPages} • ${warnings.length} active warning${warnings.length !== 1 ? 's' : ''}`
-        });
+        .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${warnings.length} active warning${warnings.length !== 1 ? 's' : ''}` });
 
-    if (!warnings.length) {
-        embed.setDescription(`✅ **${targetUser.tag}** has no active warnings.`);
-        return embed;
-    }
+    if (!warnings.length) { embed.setDescription(`✅ **${targetUser.tag}** has no active warnings.`); return embed; }
 
     embed.setDescription(`**${targetUser.tag}** (${targetUser.id}) has **${warnings.length}** active warning${warnings.length !== 1 ? 's' : ''}.`);
 
     for (const [i, w] of slice.entries()) {
-        const index = start + i + 1;
         const ts = Math.floor(new Date(w.createdAt).getTime() / 1000);
-
         const lines = [
             `**Reason:** ${w.reason}`,
             `**Moderator:** <@${w.moderatorId}> (${w.moderatorId})`,
             `**Issued:** <t:${ts}:F> (<t:${ts}:R>)`,
             `**DM sent:** ${w.dmSent ? '✅ Yes' : '❌ No'}`
         ];
-
-        if (w.proof) {
-            lines.push(`**Proof:** ${formatProofDisplay(w.proof)}`);
-        }
-
-        embed.addFields({
-            name: `Warning #${index}`,
-            value: lines.join('\n'),
-            inline: false
-        });
+        if (w.proof) lines.push(`**Proof:** ${formatProofDisplay(w.proof)}`);
+        embed.addFields({ name: `Warning #${start + i + 1}`, value: lines.join('\n'), inline: false });
     }
-
     return embed;
 }
 
-// ─── BUTTON BUILDER ──────────────────────────────────────────────────────────
-
 function buildPageButtons(prefix, currentPage, totalPages) {
     if (totalPages <= 1) return [];
-
-    const row = new ActionRowBuilder().addComponents(
+    return [new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`${prefix}_prev_${currentPage - 1}`)
-            .setLabel('← Previous')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(currentPage === 0),
+            .setLabel('← Previous').setStyle(ButtonStyle.Secondary).setDisabled(currentPage === 0),
         new ButtonBuilder()
             .setCustomId(`${prefix}_next_${currentPage + 1}`)
-            .setLabel('Next →')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(currentPage >= totalPages - 1)
-    );
-
-    return [row];
-}
-
-// ─── PROOF HELPERS ───────────────────────────────────────────────────────────
-
-function formatProofDisplay(proofData) {
-    if (!proofData) return 'None';
-    if (proofData.type === 'file') {
-        const emoji = proofData.isImage ? '🖼️' : '📄';
-        return `${emoji} [${proofData.filename}](${proofData.url})`;
-    }
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
-    return 'None';
+            .setLabel('Next →').setStyle(ButtonStyle.Secondary).setDisabled(currentPage >= totalPages - 1)
+    )];
 }
 
 module.exports.handleWarnsButton = handleWarnsButton;

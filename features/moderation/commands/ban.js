@@ -8,7 +8,8 @@ const {
     sendDM,
     logModeration,
     parseMembers,
-    handleProofData
+    handleProofData,
+    formatProofDisplay
 } = require('../utils/moderationUtils');
 
 module.exports = {
@@ -87,46 +88,28 @@ module.exports = {
         }
 
         const options = {
-            users: args[0],
-            reason: '',
-            duration: null,
-            soft: false,
-            purge_days: 0,
-            hack: false,
-            dm: true,
-            proof_url: null,
-            proof_file: null
+            users: args[0], reason: '', duration: null,
+            soft: false, purge_days: 0, hack: false, dm: true,
+            proof_url: null, proof_file: null
         };
 
         const reasonParts = [];
         for (let i = 1; i < args.length; i++) {
             const arg = args[i];
-            if (arg === '--soft') {
-                options.soft = true;
-            } else if (arg === '--hack') {
-                options.hack = true;
-            } else if (arg === '--no-dm') {
-                options.dm = false;
-            } else if (arg.startsWith('--purge=')) {
+            if (arg === '--soft') options.soft = true;
+            else if (arg === '--hack') options.hack = true;
+            else if (arg === '--no-dm') options.dm = false;
+            else if (arg.startsWith('--purge=')) {
                 const days = parseInt(arg.split('=')[1]);
-                if (days >= 0 && days <= 7) {
-                    options.purge_days = days;
-                } else {
-                    return message.reply('❌ **Error:** Purge days must be between 0 and 7.');
-                }
-            } else if (arg.startsWith('--duration=')) {
-                options.duration = arg.split('=')[1];
-            } else if (arg.startsWith('--proof=')) {
-                options.proof_url = arg.split('=')[1];
-            } else {
-                reasonParts.push(arg);
-            }
+                if (days >= 0 && days <= 7) options.purge_days = days;
+                else return message.reply('❌ **Error:** Purge days must be between 0 and 7.');
+            } else if (arg.startsWith('--duration=')) options.duration = arg.split('=')[1];
+            else if (arg.startsWith('--proof=')) options.proof_url = arg.split('=')[1];
+            else reasonParts.push(arg);
         }
 
         options.reason = reasonParts.join(' ');
-        if (!options.reason) {
-            return message.reply('❌ **Error:** Reason is required.');
-        }
+        if (!options.reason) return message.reply('❌ **Error:** Reason is required.');
 
         await this.executeBan(message, options);
     },
@@ -143,10 +126,7 @@ module.exports = {
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
-        let duration = null;
-        let durationMs = null;
-        let expiresAt = null;
-
+        let duration = null, expiresAt = null;
         if (options.duration) {
             const parsed = parseDuration(options.duration);
             if (!parsed.success) {
@@ -155,7 +135,6 @@ module.exports = {
                 return isInteraction ? context.reply(replyObj) : context.reply(reply);
             }
             duration = parsed.duration;
-            durationMs = parsed.ms;
             expiresAt = parsed.ms ? new Date(Date.now() + parsed.ms) : null;
         }
 
@@ -166,35 +145,23 @@ module.exports = {
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
 
-        const targets = memberResult.targets;
         const results = { successful: [], failed: [] };
+        if (isInteraction) await context.deferReply();
 
-        if (isInteraction) {
-            await context.deferReply();
-        }
-
-        for (const target of targets) {
+        for (const target of memberResult.targets) {
             try {
                 if (target.member) {
                     const canMod = await canModerate(moderator, target.member);
-                    if (!canMod.success) {
-                        results.failed.push({ user: target.user, reason: canMod.message });
-                        continue;
-                    }
+                    if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
                 }
 
                 const caseId = generateCaseId(options.soft ? 'softban' : 'ban');
 
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
-                        type: 'ban',
-                        guild: guild.name,
-                        reason: options.reason,
-                        duration: duration,
-                        moderatorTag: moderator.user.tag,
-                        moderatorId:  moderator.user.id,
-                        proof: proofData.data,
-                        caseId
+                        type: 'ban', guild: guild.name, reason: options.reason,
+                        duration, moderatorTag: moderator.user.tag,
+                        moderatorId: moderator.user.id, proof: proofData.data, caseId
                     });
                 }
 
@@ -210,15 +177,10 @@ module.exports = {
                 results.successful.push({ user: target.user, member: target.member, caseId });
 
                 await logModeration(guild, {
-                    type: options.soft ? 'softban' : 'ban',
-                    caseId,
-                    target: target.user,
-                    moderator: moderator.user,
-                    reason: options.reason,
-                    duration: duration,
-                    expiresAt: expiresAt,
-                    proof: proofData.data,
-                    purge_days: options.purge_days
+                    type: options.soft ? 'softban' : 'ban', caseId,
+                    target: target.user, moderator: moderator.user,
+                    reason: options.reason, duration, expiresAt,
+                    proof: proofData.data, purge_days: options.purge_days
                 });
             } catch (error) {
                 console.error(`Failed to ban ${target.user?.tag || target.id}:`, error);
@@ -239,7 +201,6 @@ module.exports = {
                 inline: false
             });
         }
-
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
@@ -252,33 +213,11 @@ module.exports = {
         if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
         if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
-
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
-        if (proofData.data?.type === 'file' && proofData.data.isImage) {
-            embed.setImage(proofData.data.url);
-        }
+        if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
     }
 };
-
-function formatProofDisplay(proofData) {
-    if (!proofData) return 'None';
-    if (proofData.type === 'file') {
-        const emoji = proofData.isImage ? '🖼️' : '📄';
-        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
-    } else if (proofData.type === 'url') {
-        return `🔗 [View Evidence](${proofData.url})`;
-    }
-    return 'None';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}

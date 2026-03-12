@@ -1,0 +1,3 @@
+module.exports = {
+    MOD_LOGS_CHANNEL_ID: '1385991704670244915'
+};

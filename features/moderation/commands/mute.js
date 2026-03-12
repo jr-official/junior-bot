@@ -3,11 +3,8 @@ const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('disc
 const { MessageFlags } = require('discord-api-types/v10');
 const { parseDuration, formatDuration } = require('../utils/durationParser');
 const {
-    canModerate,
-    sendDM,
-    logModeration,
-    parseMembers,
-    handleProofData
+    canModerate, sendDM, logModeration,
+    parseMembers, handleProofData, formatProofDisplay
 } = require('../utils/moderationUtils');
 const { generateCaseId } = require('../utils/caseID');
 
@@ -70,17 +67,13 @@ module.exports = {
 
         const options = { users: args[0], duration: args[1], reason: '', dm: true, proof_url: null, proof_file: null };
         const reasonParts = [];
-
         for (let i = 2; i < args.length; i++) {
-            const arg = args[i];
-            if (arg === '--no-dm') options.dm = false;
-            else if (arg.startsWith('--proof=')) options.proof_url = arg.split('=')[1];
-            else reasonParts.push(arg);
+            if (args[i] === '--no-dm') options.dm = false;
+            else if (args[i].startsWith('--proof=')) options.proof_url = args[i].split('=')[1];
+            else reasonParts.push(args[i]);
         }
-
         options.reason = reasonParts.join(' ');
         if (!options.reason) return message.reply('❌ **Error:** Reason is required.');
-
         await this.executeMute(message, options);
     },
 
@@ -95,13 +88,11 @@ module.exports = {
             const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
-
         if (!parsed.ms) {
             const reply = `❌ Mute duration cannot be permanent. Discord timeouts require a set duration (max 28 days).`;
             const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
             return isInteraction ? context.reply(replyObj) : context.reply(reply);
         }
-
         if (parsed.ms > MAX_TIMEOUT_MS) {
             const reply = `❌ Mute duration cannot exceed 28 days (Discord limitation).`;
             const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
@@ -130,21 +121,12 @@ module.exports = {
 
         for (const target of memberResult.targets) {
             try {
-                if (!target.member) {
-                    results.failed.push({ user: target.user, reason: 'User is not in the server.' });
-                    continue;
-                }
+                if (!target.member) { results.failed.push({ user: target.user, reason: 'User is not in the server.' }); continue; }
 
                 const canMod = await canModerate(moderator, target.member);
-                if (!canMod.success) {
-                    results.failed.push({ user: target.user, reason: canMod.message });
-                    continue;
-                }
+                if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
 
-                if (!target.member.moderatable) {
-                    results.failed.push({ user: target.user, reason: 'I cannot moderate this user.' });
-                    continue;
-                }
+                if (!target.member.moderatable) { results.failed.push({ user: target.user, reason: 'I cannot moderate this user.' }); continue; }
 
                 if (target.member.communicationDisabledUntilTimestamp &&
                     target.member.communicationDisabledUntilTimestamp > Date.now()) {
@@ -160,15 +142,9 @@ module.exports = {
 
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
-                        type: 'mute',
-                        guild: guild.name,
-                        reason: options.reason,
-                        duration,
-                        expiresAt,
-                        moderatorTag: moderator.user.tag,
-                        moderatorId:  moderator.user.id,
-                        proof: proofData.data,
-                        caseId
+                        type: 'mute', guild: guild.name, reason: options.reason,
+                        duration, expiresAt, moderatorTag: moderator.user.tag,
+                        moderatorId: moderator.user.id, proof: proofData.data, caseId
                     });
                 }
 
@@ -176,14 +152,8 @@ module.exports = {
                 results.successful.push({ user: target.user, expiresAt, caseId });
 
                 await logModeration(guild, {
-                    type: 'mute',
-                    caseId,
-                    target: target.user,
-                    moderator: moderator.user,
-                    reason: options.reason,
-                    duration,
-                    expiresAt,
-                    proof: proofData.data
+                    type: 'mute', caseId, target: target.user, moderator: moderator.user,
+                    reason: options.reason, duration, expiresAt, proof: proofData.data
                 });
             } catch (error) {
                 console.error(`Failed to mute ${target.user?.tag}:`, error);
@@ -192,9 +162,7 @@ module.exports = {
         }
 
         const embed = new EmbedBuilder()
-            .setColor('#ffa500')
-            .setTitle('🔇 Mute Results')
-            .setTimestamp()
+            .setColor('#ffa500').setTitle('🔇 Mute Results').setTimestamp()
             .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
 
         if (results.successful.length > 0) {
@@ -206,7 +174,6 @@ module.exports = {
                 inline: false
             });
         }
-
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
@@ -222,28 +189,9 @@ module.exports = {
         ];
         if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
-
         if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);
 
         const reply = { embeds: [embed] };
         return isInteraction ? context.editReply(reply) : context.reply(reply);
     }
 };
-
-function formatProofDisplay(proofData) {
-    if (!proofData) return 'None';
-    if (proofData.type === 'file') {
-        const emoji = proofData.isImage ? '🖼️' : '📄';
-        return `${emoji} [${proofData.filename}](${proofData.url}) (${formatFileSize(proofData.size)})`;
-    }
-    if (proofData.type === 'url') return `🔗 [View Evidence](${proofData.url})`;
-    return 'None';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}

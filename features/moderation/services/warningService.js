@@ -20,6 +20,15 @@ class WarningService {
         return { ...warning, _id: result.insertedId };
     }
 
+    // FIX: dedicated method so callers never access _col() directly
+    async markDmSent(warningId, sent = true) {
+        try {
+            await this._col().updateOne({ _id: warningId }, { $set: { dmSent: sent } });
+        } catch (error) {
+            console.error('Error marking DM sent on warning:', error);
+        }
+    }
+
     async removeWarningById(warningId) {
         let objectId;
         try { objectId = new ObjectId(warningId); } catch { return null; }

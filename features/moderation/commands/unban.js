@@ -29,18 +29,14 @@ module.exports = {
     },
 
     async executePrefix(message, args) {
-        if (args.length < 2) {
-            return message.reply('❌ **Usage:** `!unban <user> <reason>`');
-        }
-        await this.executeUnban(message, {
-            user: args[0],
-            reason: args.slice(1).join(' ')
-        });
+        if (args.length < 2) return message.reply('❌ **Usage:** `!unban <user> <reason>`');
+        await this.executeUnban(message, { user: args[0], reason: args.slice(1).join(' ') });
     },
 
     async executeUnban(context, options) {
         const guild = context.guild;
-        const moderator = context.member;
+        // FIX: was `context.member` only — crashes on prefix commands where member can be null
+        const moderator = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
@@ -69,24 +65,21 @@ module.exports = {
                 return isInteraction ? context.reply(replyObj) : context.reply(reply);
             }
 
-            await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderator.user.tag}`);
+            // Normalise so .tag / .id / .displayAvatarURL() always exist
+            const moderatorUser = moderator.user ?? moderator;
+
+            await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderatorUser.tag}`);
 
             const caseId = generateCaseId('unban');
 
             await sendDM(targetUser, {
-                type: 'unban',
-                guild: guild.name,
-                reason: options.reason,
-                moderatorTag: moderator.user.tag,
-                moderatorId:  moderator.user.id,
-                caseId
+                type: 'unban', guild: guild.name, reason: options.reason,
+                moderatorTag: moderatorUser.tag, moderatorId: moderatorUser.id, caseId
             });
 
             await logModeration(guild, {
-                type: 'unban',
-                caseId,
-                target: targetUser,
-                moderator: moderator.user,
+                type: 'unban', caseId,
+                target: targetUser, moderator: moderatorUser,
                 reason: options.reason
             });
 
@@ -96,11 +89,11 @@ module.exports = {
                 .addFields(
                     { name: 'Case ID',   value: caseId, inline: true },
                     { name: 'User',      value: `${targetUser.tag} (${targetUser.id})`, inline: true },
-                    { name: 'Moderator', value: `${moderator.user.tag} (${moderator.user.id})`, inline: true },
+                    { name: 'Moderator', value: `${moderatorUser.tag} (${moderatorUser.id})`, inline: true },
                     { name: 'Reason',    value: options.reason, inline: false }
                 )
                 .setTimestamp()
-                .setFooter({ text: `Moderator: ${moderator.user.tag}`, iconURL: moderator.user.displayAvatarURL() });
+                .setFooter({ text: `Moderator: ${moderatorUser.tag}`, iconURL: moderatorUser.displayAvatarURL() });
 
             const reply = { embeds: [embed] };
             return isInteraction ? context.reply(reply) : context.reply(reply);
