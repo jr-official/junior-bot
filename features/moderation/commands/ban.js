@@ -62,21 +62,22 @@ module.exports = {
 
     async executeSlash(interaction) {
         await this.executeBan(interaction, {
-            users: interaction.options.getString('user'),
-            reason: interaction.options.getString('reason'),
-            duration: interaction.options.getString('duration'),
-            soft: interaction.options.getBoolean('soft') || false,
+            users:      interaction.options.getString('user'),
+            reason:     interaction.options.getString('reason'),
+            duration:   interaction.options.getString('duration'),
+            soft:       interaction.options.getBoolean('soft')    || false,
             purge_days: interaction.options.getInteger('purge_days') || 0,
-            hack: interaction.options.getBoolean('hack') || false,
-            dm: interaction.options.getBoolean('dm') !== false,
-            proof_url: interaction.options.getString('proof_url'),
+            hack:       interaction.options.getBoolean('hack')    || false,
+            dm:         interaction.options.getBoolean('dm')      !== false,
+            proof_url:  interaction.options.getString('proof_url'),
             proof_file: interaction.options.getAttachment('proof_file')
         });
     },
 
     async executePrefix(message, args) {
         if (args.length < 2) {
-            return message.reply('❌ **Usage:** `!ban <user> <reason> [options]`\n' +
+            return message.reply(
+                '❌ **Usage:** `!ban <user> <reason> [options]`\n' +
                 '**Options:**\n' +
                 '`--soft` - Soft ban (delete messages then unban)\n' +
                 '`--hack` - Force ban user not in server\n' +
@@ -84,7 +85,8 @@ module.exports = {
                 '`--purge=<days>` - Days of messages to delete (0-7)\n' +
                 '`--duration=<time>` - Ban duration (e.g., 1d, 1w, 1m)\n' +
                 '`--proof=<url>` - Evidence URL\n' +
-                '**Example:** `!ban @user spam --soft --purge=7 --duration=1d`');
+                '**Example:** `!ban @user spam --soft --purge=7 --duration=1d`'
+            );
         }
 
         const options = {
@@ -115,44 +117,55 @@ module.exports = {
     },
 
     async executeBan(context, options) {
-        const guild = context.guild;
-        const moderator = context.member || context.author;
+        const guild      = context.guild;
+        const moderator  = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
         if (proofData.error) {
             const reply = `❌ Proof validation failed: ${proofData.error}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
         let duration = null, expiresAt = null;
         if (options.duration) {
             const parsed = parseDuration(options.duration);
             if (!parsed.success) {
-                const reply = `❌ Invalid duration format. Use formats like: 1d, 1w, 1m, permanent`;
-                const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-                return isInteraction ? context.reply(replyObj) : context.reply(reply);
+                const reply = '❌ Invalid duration format. Use formats like: 1d, 1w, 1m, permanent';
+                return isInteraction
+                    ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                    : context.reply(reply);
             }
-            duration = parsed.duration;
+            duration  = parsed.duration;
             expiresAt = parsed.ms ? new Date(Date.now() + parsed.ms) : null;
         }
 
         const memberResult = await parseMembers(guild, options.users, options.hack);
         if (!memberResult.success) {
             const reply = `❌ ${memberResult.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
-        const results = { successful: [], failed: [] };
         if (isInteraction) await context.deferReply();
+
+        // Pre-populate failed list with any users parseMembers couldn't resolve
+        const results = {
+            successful: [],
+            failed: (memberResult.failed || []).map(f => ({ user: f.user, reason: f.reason }))
+        };
 
         for (const target of memberResult.targets) {
             try {
                 if (target.member) {
                     const canMod = await canModerate(moderator, target.member);
-                    if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
+                    if (!canMod.success) {
+                        results.failed.push({ user: target.user, reason: canMod.message });
+                        continue;
+                    }
                 }
 
                 const caseId = generateCaseId(options.soft ? 'softban' : 'ban');
@@ -197,22 +210,26 @@ module.exports = {
         if (results.successful.length > 0) {
             embed.addFields({
                 name: `${options.soft ? 'Soft Banned' : 'Banned'} (${results.successful.length})`,
-                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``).join('\n'),
+                value: results.successful.map(r =>
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                ).join('\n'),
                 inline: false
             });
         }
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
-                value: results.failed.map(r => `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`).join('\n'),
+                value: results.failed.map(r =>
+                    `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`
+                ).join('\n'),
                 inline: false
             });
         }
 
         const details = [`**Reason:** ${options.reason}`];
-        if (duration) details.push(`**Duration:** ${formatDuration(duration)}`);
+        if (duration)            details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
-        if (proofData.data) details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
+        if (proofData.data)      details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
         if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);

@@ -5,25 +5,41 @@ const { generateCaseId } = require('../utils/caseID');
 
 class WarningService {
     constructor() { this.collection = 'warnings'; }
+
     _col() { return databaseService.getCollection(this.collection); }
 
     async addWarning(guildId, targetUser, moderatorUser, reason, proof, dmSent) {
         const caseId = generateCaseId('warn');
         const warning = {
-            caseId, guildId,
-            userId: targetUser.id, username: targetUser.tag,
-            moderatorId: moderatorUser.id, moderatorTag: moderatorUser.tag,
-            reason, proof: proof || null, dmSent: dmSent ?? false,
-            createdAt: new Date(), active: true
+            caseId,
+            guildId,
+            userId:       targetUser.id,
+            username:     targetUser.tag,
+            moderatorId:  moderatorUser.id,
+            moderatorTag: moderatorUser.tag,
+            reason,
+            proof:    proof || null,
+            dmSent:   dmSent ?? false,
+            createdAt: new Date(),
+            active:    true
         };
         const result = await this._col().insertOne(warning);
+        // Return the full document with the inserted _id (already an ObjectId)
         return { ...warning, _id: result.insertedId };
     }
 
-    // FIX: dedicated method so callers never access _col() directly
+    // Dedicated method so callers never access _col() directly.
+    // warningId is the ObjectId returned from addWarning — no conversion needed
+    // because insertedId is already an ObjectId, but we guard defensively.
     async markDmSent(warningId, sent = true) {
         try {
-            await this._col().updateOne({ _id: warningId }, { $set: { dmSent: sent } });
+            let objectId;
+            if (warningId instanceof ObjectId) {
+                objectId = warningId;
+            } else {
+                try { objectId = new ObjectId(warningId); } catch { return; }
+            }
+            await this._col().updateOne({ _id: objectId }, { $set: { dmSent: sent } });
         } catch (error) {
             console.error('Error marking DM sent on warning:', error);
         }

@@ -1,7 +1,10 @@
 // features/moderation/commands/unban.js
+// Note: permission checking is handled upstream by slashCommandHandler /
+// prefixCommandHandler before executeSlash / executePrefix are called.
+// The redundant internal validatePermissions call has been removed.
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { MessageFlags } = require('discord-api-types/v10');
-const { validatePermissions, sendDM, logModeration } = require('../utils/moderationUtils');
+const { sendDM, logModeration } = require('../utils/moderationUtils');
 const { generateCaseId } = require('../utils/caseID');
 
 module.exports = {
@@ -23,7 +26,7 @@ module.exports = {
 
     async executeSlash(interaction) {
         await this.executeUnban(interaction, {
-            user: interaction.options.getString('user'),
+            user:   interaction.options.getString('user'),
             reason: interaction.options.getString('reason')
         });
     },
@@ -35,16 +38,10 @@ module.exports = {
 
     async executeUnban(context, options) {
         const guild = context.guild;
-        // FIX: was `context.member` only — crashes on prefix commands where member can be null
-        const moderator = context.member || context.author;
+        // Normalise moderator whether this is a slash interaction or a prefix message
+        const moderator     = context.member || context.author;
+        const moderatorUser = moderator.user ?? moderator;
         const isInteraction = context.replied !== undefined;
-
-        const permissionCheck = await validatePermissions(moderator, 'BAN_MEMBERS');
-        if (!permissionCheck.success) {
-            const reply = `❌ ${permissionCheck.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
-        }
 
         try {
             const bans = await guild.bans.fetch();
@@ -55,18 +52,16 @@ module.exports = {
             } else {
                 targetUser = bans.find(ban =>
                     ban.user.username.toLowerCase() === options.user.toLowerCase() ||
-                    ban.user.tag.toLowerCase() === options.user.toLowerCase()
+                    ban.user.tag.toLowerCase()      === options.user.toLowerCase()
                 )?.user;
             }
 
             if (!targetUser) {
-                const reply = `❌ User not found in ban list.`;
-                const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-                return isInteraction ? context.reply(replyObj) : context.reply(reply);
+                const reply = '❌ User not found in ban list.';
+                return isInteraction
+                    ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                    : context.reply(reply);
             }
-
-            // Normalise so .tag / .id / .displayAvatarURL() always exist
-            const moderatorUser = moderator.user ?? moderator;
 
             await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderatorUser.tag}`);
 
@@ -79,18 +74,19 @@ module.exports = {
 
             await logModeration(guild, {
                 type: 'unban', caseId,
-                target: targetUser, moderator: moderatorUser,
-                reason: options.reason
+                target:    targetUser,
+                moderator: moderatorUser,
+                reason:    options.reason
             });
 
             const embed = new EmbedBuilder()
                 .setColor('#00ff00')
                 .setTitle('🔓 User Unbanned')
                 .addFields(
-                    { name: 'Case ID',   value: caseId, inline: true },
-                    { name: 'User',      value: `${targetUser.tag} (${targetUser.id})`, inline: true },
-                    { name: 'Moderator', value: `${moderatorUser.tag} (${moderatorUser.id})`, inline: true },
-                    { name: 'Reason',    value: options.reason, inline: false }
+                    { name: 'Case ID',   value: caseId,                                        inline: true  },
+                    { name: 'User',      value: `${targetUser.tag} (${targetUser.id})`,        inline: true  },
+                    { name: 'Moderator', value: `${moderatorUser.tag} (${moderatorUser.id})`,  inline: true  },
+                    { name: 'Reason',    value: options.reason,                                inline: false }
                 )
                 .setTimestamp()
                 .setFooter({ text: `Moderator: ${moderatorUser.tag}`, iconURL: moderatorUser.displayAvatarURL() });
@@ -100,8 +96,9 @@ module.exports = {
         } catch (error) {
             console.error('Failed to unban user:', error);
             const reply = `❌ Failed to unban user: ${error.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
     }
 };

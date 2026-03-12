@@ -67,19 +67,19 @@ module.exports = {
 
     async showLeaderboard(interaction, page) {
         const leaderboard = await warningService.getGuildLeaderboard(interaction.guild.id);
-        const embed = buildLeaderboardEmbed(interaction.guild.name, leaderboard, page);
-        const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
-        const components = buildPageButtons('warns_lb', page, totalPages);
-        const payload = { embeds: [embed], components };
+        const embed       = buildLeaderboardEmbed(interaction.guild.name, leaderboard, page);
+        const totalPages  = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
+        const components  = buildPageButtons('warns_lb', page, totalPages);
+        const payload     = { embeds: [embed], components };
         interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
     },
 
     async showUserWarnings(interaction, targetUser, page) {
-        const warnings = await warningService.getUserWarnings(interaction.guild.id, targetUser.id);
-        const embed = buildUserWarningsEmbed(targetUser, warnings, page);
+        const warnings   = await warningService.getUserWarnings(interaction.guild.id, targetUser.id);
+        const embed      = buildUserWarningsEmbed(targetUser, warnings, page);
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const components = buildPageButtons(`warns_user_${targetUser.id}`, page, totalPages);
-        const payload = { embeds: [embed], components };
+        const payload    = { embeds: [embed], components };
         interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
     }
 };
@@ -93,24 +93,24 @@ async function handleWarnsButton(interaction) {
         const page = parseInt(match[2]);
         await interaction.deferUpdate();
         const leaderboard = await warningService.getGuildLeaderboard(interaction.guild.id);
-        const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
+        const totalPages  = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
         const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
-        const embed = buildLeaderboardEmbed(interaction.guild.name, leaderboard, clampedPage);
+        const embed       = buildLeaderboardEmbed(interaction.guild.name, leaderboard, clampedPage);
         return interaction.editReply({ embeds: [embed], components: buildPageButtons('warns_lb', clampedPage, totalPages) });
     }
 
     match = customId.match(/^warns_user_(\d+)_(prev|next)_(\d+)$/);
     if (match) {
         const userId = match[1];
-        const page = parseInt(match[3]);
+        const page   = parseInt(match[3]);
         await interaction.deferUpdate();
         let targetUser;
         try { targetUser = await interaction.client.users.fetch(userId); }
         catch { return interaction.editReply({ content: '❌ Could not fetch user.', embeds: [], components: [] }); }
-        const warnings = await warningService.getUserWarnings(interaction.guild.id, userId);
+        const warnings   = await warningService.getUserWarnings(interaction.guild.id, userId);
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
-        const embed = buildUserWarningsEmbed(targetUser, warnings, clampedPage);
+        const embed       = buildUserWarningsEmbed(targetUser, warnings, clampedPage);
         return interaction.editReply({ embeds: [embed], components: buildPageButtons(`warns_user_${userId}`, clampedPage, totalPages) });
     }
 
@@ -119,8 +119,8 @@ async function handleWarnsButton(interaction) {
 
 function buildLeaderboardEmbed(guildName, leaderboard, page) {
     const totalPages = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
-    const start = page * WARNINGS_PER_PAGE;
-    const slice = leaderboard.slice(start, start + WARNINGS_PER_PAGE);
+    const start      = page * WARNINGS_PER_PAGE;
+    const slice      = leaderboard.slice(start, start + WARNINGS_PER_PAGE);
 
     const embed = new EmbedBuilder()
         .setColor('#ffcc00')
@@ -128,20 +128,24 @@ function buildLeaderboardEmbed(guildName, leaderboard, page) {
         .setTimestamp()
         .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${leaderboard.length} user${leaderboard.length !== 1 ? 's' : ''} with warnings` });
 
-    if (!leaderboard.length) { embed.setDescription('✅ No warnings have been issued in this server.'); return embed; }
+    if (!leaderboard.length) {
+        embed.setDescription('✅ No warnings have been issued in this server.');
+        return embed;
+    }
 
     embed.setDescription(slice.map((entry, i) => {
-        const rank = start + i + 1;
+        const rank  = start + i + 1;
         const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `**${rank}.**`;
         return `${medal} <@${entry.userId}> (${entry.userId}) — **${entry.count}** ${entry.count === 1 ? 'warning' : 'warnings'}`;
     }).join('\n'));
+
     return embed;
 }
 
 function buildUserWarningsEmbed(targetUser, warnings, page) {
     const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
-    const start = page * DETAILS_PER_PAGE;
-    const slice = warnings.slice(start, start + DETAILS_PER_PAGE);
+    const start      = page * DETAILS_PER_PAGE;
+    const slice      = warnings.slice(start, start + DETAILS_PER_PAGE);
 
     const embed = new EmbedBuilder()
         .setColor('#ffcc00')
@@ -150,12 +154,15 @@ function buildUserWarningsEmbed(targetUser, warnings, page) {
         .setTimestamp()
         .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${warnings.length} active warning${warnings.length !== 1 ? 's' : ''}` });
 
-    if (!warnings.length) { embed.setDescription(`✅ **${targetUser.tag}** has no active warnings.`); return embed; }
+    if (!warnings.length) {
+        embed.setDescription(`✅ **${targetUser.tag}** has no active warnings.`);
+        return embed;
+    }
 
     embed.setDescription(`**${targetUser.tag}** (${targetUser.id}) has **${warnings.length}** active warning${warnings.length !== 1 ? 's' : ''}.`);
 
     for (const [i, w] of slice.entries()) {
-        const ts = Math.floor(new Date(w.createdAt).getTime() / 1000);
+        const ts    = Math.floor(new Date(w.createdAt).getTime() / 1000);
         const lines = [
             `**Reason:** ${w.reason}`,
             `**Moderator:** <@${w.moderatorId}> (${w.moderatorId})`,
@@ -165,6 +172,7 @@ function buildUserWarningsEmbed(targetUser, warnings, page) {
         if (w.proof) lines.push(`**Proof:** ${formatProofDisplay(w.proof)}`);
         embed.addFields({ name: `Warning #${start + i + 1}`, value: lines.join('\n'), inline: false });
     }
+
     return embed;
 }
 

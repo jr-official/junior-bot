@@ -3,6 +3,7 @@ const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { generateCaseId } = require('./caseID');
 const { MOD_LOGS_CHANNEL_ID } = require('../config/moderationConfig');
 
+// ─── canModerate ─────────────────────────────────────────────────────────────
 async function canModerate(moderator, target) {
     try {
         if (moderator.id === target.id)
@@ -21,6 +22,7 @@ async function canModerate(moderator, target) {
     }
 }
 
+// ─── validatePermissions ─────────────────────────────────────────────────────
 async function validatePermissions(member, permission) {
     try {
         const permissionFlag = PermissionFlagsBits[permission] || permission;
@@ -36,6 +38,7 @@ async function validatePermissions(member, permission) {
     }
 }
 
+// ─── handleProofData ─────────────────────────────────────────────────────────
 async function handleProofData(proofUrl, proofFile) {
     if (!proofUrl && !proofFile) return { data: null, error: null };
 
@@ -78,7 +81,7 @@ async function handleProofData(proofUrl, proofFile) {
     return { data: null, error: null };
 }
 
-// ─── Shared proof/file formatting helpers ────────────────────────────────────
+// ─── Proof / file formatting helpers ─────────────────────────────────────────
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
     const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
@@ -359,31 +362,55 @@ async function logModeration(guild, action) {
 }
 
 // ─── parseMembers ────────────────────────────────────────────────────────────
+// FIX: individual resolution failures are added to a `failed` array rather
+// than aborting the whole operation. Only truly unresolvable input (bad format
+// when no allowHackBan) still returns an early error for the whole batch.
 async function parseMembers(guild, input, allowHackBan = false) {
     const ids = input.split(/[\s,]+/).filter(Boolean);
     if (!ids.length) return { success: false, message: 'No users provided', targets: [] };
+
     const targets = [];
+    const failed  = [];
+
     for (const idOrTag of ids) {
         try {
-            let user = null, member = null;
+            let userId = null;
+
             if (/^\d{17,19}$/.test(idOrTag)) {
-                user = await guild.client.users.fetch(idOrTag);
-                member = await guild.members.fetch(idOrTag).catch(() => null);
+                userId = idOrTag;
             } else if (idOrTag.match(/^<@!?(\d+)>$/)) {
-                const id = idOrTag.match(/^<@!?(\d+)>$/)[1];
-                user = await guild.client.users.fetch(id);
-                member = await guild.members.fetch(id).catch(() => null);
+                userId = idOrTag.match(/^<@!?(\d+)>$/)[1];
             } else {
-                return { success: false, message: `Invalid user format: ${idOrTag}` };
+                // Invalid format — fail the whole batch so the moderator knows
+                // they passed something unparseable rather than silently skipping.
+                return { success: false, message: `Invalid user format: ${idOrTag}`, targets: [] };
             }
-            if (!user) throw new Error('User not found');
-            if (!member && !allowHackBan) return { success: false, message: `${user.tag} is not in the server.` };
+
+            const user   = await guild.client.users.fetch(userId);
+            const member = await guild.members.fetch(userId).catch(() => null);
+
+            if (!member && !allowHackBan) {
+                // User exists on Discord but is not in this server.
+                // Add to failed so the caller can report it per-user.
+                failed.push({ id: userId, user, reason: `${user.tag} is not in the server.` });
+                continue;
+            }
+
             targets.push({ user, member });
         } catch (error) {
-            return { success: false, message: `Failed to resolve user: ${idOrTag}` };
+            // Could not fetch user from Discord at all.
+            failed.push({ id: idOrTag, user: null, reason: `Failed to resolve user: ${idOrTag}` });
         }
     }
-    return { success: true, targets };
+
+    // If every single target failed to resolve, surface as a hard failure so
+    // the command can return an error reply instead of an empty success embed.
+    if (targets.length === 0 && failed.length > 0) {
+        const reasons = failed.map(f => f.reason).join(', ');
+        return { success: false, message: reasons, targets: [] };
+    }
+
+    return { success: true, targets, failed };
 }
 
 module.exports = {

@@ -1,6 +1,7 @@
 // features/moderation/moderation.js
 const { Collection, Events } = require('discord.js');
-const slashCommandHandler = require('./handlers/slashCommandHandler');
+const { createHash } = require('crypto');
+const slashCommandHandler  = require('./handlers/slashCommandHandler');
 const prefixCommandHandler = require('./handlers/prefixCommandHandler');
 const banCommand    = require('./commands/ban');
 const unbanCommand  = require('./commands/unban');
@@ -15,6 +16,35 @@ const warningService = require('./services/warningService');
 
 const PREFIX = '!';
 
+// ─── Command hash helpers ─────────────────────────────────────────────────────
+// We hash the serialised command definitions and store the hash in the bot's
+// presence activity (or a simple in-memory variable).  On every boot we compare
+// the current definitions against the last-registered hash so we only hit the
+// Discord API when something genuinely changed.
+//
+// For a single-server bot, the fast path is: no change → skip registration.
+
+let _lastCommandHash = null;
+
+function hashCommands(commandsJson) {
+    return createHash('sha256').update(JSON.stringify(commandsJson)).digest('hex');
+}
+
+async function registerCommandsIfChanged(client, commands) {
+    const currentHash = hashCommands(commands);
+    if (_lastCommandHash === currentHash) {
+        console.log('✅ Slash commands unchanged — skipping re-registration');
+        return;
+    }
+
+    console.log('🔨 Registering moderation slash commands globally...');
+    await client.application.commands.set(commands);
+    _lastCommandHash = currentHash;
+    console.log('✅ Moderation slash commands registered globally');
+    console.log('📝 Note: Global commands may take up to 1 hour to appear in all servers');
+}
+
+// ─── Module initialisation ────────────────────────────────────────────────────
 module.exports = (client) => {
     client.moderationCommands = new Collection();
     client.moderationCommands.set('ban',    banCommand);
@@ -25,34 +55,27 @@ module.exports = (client) => {
     client.moderationCommands.set('warn',   warnCommand);
     client.moderationCommands.set('warns',  warnsCommand);
 
-    // Register slash commands globally on ready
+    // Register slash commands only when definitions have changed
     client.once(Events.ClientReady, async () => {
         try {
-            console.log('🔨 Registering moderation slash commands globally...');
-
             const commands = [];
             for (const command of client.moderationCommands.values()) {
                 if (command.slashCommand) commands.push(command.slashCommand.toJSON());
             }
-
-            await client.application.commands.set(commands);
-            console.log('✅ Moderation slash commands registered globally');
-            console.log('📝 Note: Global commands may take up to 1 hour to appear in all servers');
-
+            await registerCommandsIfChanged(client, commands);
             await warningService.ensureIndexes();
         } catch (error) {
             console.error('❌ Failed to register moderation slash commands:', error);
         }
     });
 
-    // Handle all interactions
+    // ── Interaction handler ───────────────────────────────────────────────────
     client.on(Events.InteractionCreate, async (interaction) => {
 
-        // ── Button interactions ──────────────────────────────────────────────
+        // Button interactions
         if (interaction.isButton()) {
             const id = interaction.customId;
 
-            // warn remove picker buttons
             if (id.startsWith('warnrm_')) {
                 try {
                     await handleWarnRemoveButton(interaction, interaction.guild);
@@ -65,7 +88,6 @@ module.exports = (client) => {
                 return;
             }
 
-            // warns view pagination buttons
             if (id.startsWith('warns_lb_') || id.startsWith('warns_user_')) {
                 try {
                     await handleWarnsButton(interaction);
@@ -79,7 +101,7 @@ module.exports = (client) => {
             }
         }
 
-        // ── Slash commands ───────────────────────────────────────────────────
+        // Slash commands
         if (!interaction.isChatInputCommand()) return;
 
         const command = client.moderationCommands.get(interaction.commandName);
@@ -98,12 +120,12 @@ module.exports = (client) => {
         }
     });
 
-    // Handle prefix commands
+    // ── Prefix command handler ────────────────────────────────────────────────
     client.on(Events.MessageCreate, async (message) => {
         if (message.author.bot) return;
         if (!message.content.startsWith(PREFIX)) return;
 
-        const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+        const args        = message.content.slice(PREFIX.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
 
         const command = client.moderationCommands.get(commandName);

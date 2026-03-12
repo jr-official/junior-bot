@@ -46,11 +46,11 @@ module.exports = {
 
     async executeSlash(interaction) {
         await this.executeMute(interaction, {
-            users: interaction.options.getString('user'),
-            duration: interaction.options.getString('duration'),
-            reason: interaction.options.getString('reason'),
-            dm: interaction.options.getBoolean('dm') !== false,
-            proof_url: interaction.options.getString('proof_url'),
+            users:      interaction.options.getString('user'),
+            duration:   interaction.options.getString('duration'),
+            reason:     interaction.options.getString('reason'),
+            dm:         interaction.options.getBoolean('dm') !== false,
+            proof_url:  interaction.options.getString('proof_url'),
             proof_file: interaction.options.getAttachment('proof_file')
         });
     },
@@ -78,58 +78,78 @@ module.exports = {
     },
 
     async executeMute(context, options) {
-        const guild = context.guild;
-        const moderator = context.member || context.author;
+        const guild      = context.guild;
+        const moderator  = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const parsed = parseDuration(options.duration);
         if (!parsed.success) {
-            const reply = `❌ Invalid duration format. Use formats like: 10m, 1h, 6h, 1d, 1w (max 28 days)`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            const reply = '❌ Invalid duration format. Use formats like: 10m, 1h, 6h, 1d, 1w (max 28 days)';
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
         if (!parsed.ms) {
-            const reply = `❌ Mute duration cannot be permanent. Discord timeouts require a set duration (max 28 days).`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            const reply = '❌ Mute duration cannot be permanent. Discord timeouts require a set duration (max 28 days).';
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
         if (parsed.ms > MAX_TIMEOUT_MS) {
-            const reply = `❌ Mute duration cannot exceed 28 days (Discord limitation).`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            const reply = '❌ Mute duration cannot exceed 28 days (Discord limitation).';
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
-        const duration = parsed.duration;
+        const duration  = parsed.duration;
         const expiresAt = new Date(Date.now() + parsed.ms);
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
         if (proofData.error) {
             const reply = `❌ Proof validation failed: ${proofData.error}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
         const memberResult = await parseMembers(guild, options.users, false);
         if (!memberResult.success) {
             const reply = `❌ ${memberResult.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
-        const results = { successful: [], failed: [] };
         if (isInteraction) await context.deferReply();
+
+        const results = {
+            successful: [],
+            failed: (memberResult.failed || []).map(f => ({ user: f.user, reason: f.reason }))
+        };
 
         for (const target of memberResult.targets) {
             try {
-                if (!target.member) { results.failed.push({ user: target.user, reason: 'User is not in the server.' }); continue; }
+                if (!target.member) {
+                    results.failed.push({ user: target.user, reason: 'User is not in the server.' });
+                    continue;
+                }
 
                 const canMod = await canModerate(moderator, target.member);
-                if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
+                if (!canMod.success) {
+                    results.failed.push({ user: target.user, reason: canMod.message });
+                    continue;
+                }
 
-                if (!target.member.moderatable) { results.failed.push({ user: target.user, reason: 'I cannot moderate this user.' }); continue; }
+                if (!target.member.moderatable) {
+                    results.failed.push({ user: target.user, reason: 'I cannot moderate this user.' });
+                    continue;
+                }
 
-                if (target.member.communicationDisabledUntilTimestamp &&
-                    target.member.communicationDisabledUntilTimestamp > Date.now()) {
+                if (
+                    target.member.communicationDisabledUntilTimestamp &&
+                    target.member.communicationDisabledUntilTimestamp > Date.now()
+                ) {
                     const existing = new Date(target.member.communicationDisabledUntilTimestamp);
                     results.failed.push({
                         user: target.user,
@@ -177,7 +197,9 @@ module.exports = {
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
-                value: results.failed.map(r => `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`).join('\n'),
+                value: results.failed.map(r =>
+                    `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`
+                ).join('\n'),
                 inline: false
             });
         }

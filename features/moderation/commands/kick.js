@@ -39,10 +39,10 @@ module.exports = {
 
     async executeSlash(interaction) {
         await this.executeKick(interaction, {
-            users: interaction.options.getString('user'),
-            reason: interaction.options.getString('reason'),
-            dm: interaction.options.getBoolean('dm') !== false,
-            proof_url: interaction.options.getString('proof_url'),
+            users:      interaction.options.getString('user'),
+            reason:     interaction.options.getString('reason'),
+            dm:         interaction.options.getBoolean('dm') !== false,
+            proof_url:  interaction.options.getString('proof_url'),
             proof_file: interaction.options.getAttachment('proof_file')
         });
     },
@@ -69,33 +69,45 @@ module.exports = {
     },
 
     async executeKick(context, options) {
-        const guild = context.guild;
-        const moderator = context.member || context.author;
+        const guild      = context.guild;
+        const moderator  = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
         if (proofData.error) {
             const reply = `❌ Proof validation failed: ${proofData.error}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
         const memberResult = await parseMembers(guild, options.users, false);
         if (!memberResult.success) {
             const reply = `❌ ${memberResult.message}`;
-            const replyObj = { content: reply, flags: MessageFlags.Ephemeral };
-            return isInteraction ? context.reply(replyObj) : context.reply(reply);
+            return isInteraction
+                ? context.reply({ content: reply, flags: MessageFlags.Ephemeral })
+                : context.reply(reply);
         }
 
-        const results = { successful: [], failed: [] };
         if (isInteraction) await context.deferReply();
+
+        const results = {
+            successful: [],
+            failed: (memberResult.failed || []).map(f => ({ user: f.user, reason: f.reason }))
+        };
 
         for (const target of memberResult.targets) {
             try {
-                if (!target.member) { results.failed.push({ user: target.user, reason: 'User is not in the server.' }); continue; }
+                if (!target.member) {
+                    results.failed.push({ user: target.user, reason: 'User is not in the server.' });
+                    continue;
+                }
 
                 const canMod = await canModerate(moderator, target.member);
-                if (!canMod.success) { results.failed.push({ user: target.user, reason: canMod.message }); continue; }
+                if (!canMod.success) {
+                    results.failed.push({ user: target.user, reason: canMod.message });
+                    continue;
+                }
 
                 if (!target.member.kickable) {
                     results.failed.push({ user: target.user, reason: 'I cannot kick this user (insufficient permissions or role hierarchy).' });
@@ -132,14 +144,18 @@ module.exports = {
         if (results.successful.length > 0) {
             embed.addFields({
                 name: `Kicked (${results.successful.length})`,
-                value: results.successful.map(r => `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``).join('\n'),
+                value: results.successful.map(r =>
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                ).join('\n'),
                 inline: false
             });
         }
         if (results.failed.length > 0) {
             embed.addFields({
                 name: `Failed (${results.failed.length})`,
-                value: results.failed.map(r => `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`).join('\n'),
+                value: results.failed.map(r =>
+                    `❌ **${r.user?.tag || 'Unknown'}** - ${r.reason}`
+                ).join('\n'),
                 inline: false
             });
         }
