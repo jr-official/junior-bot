@@ -264,19 +264,22 @@ async function handleWarnRemoveButton(interaction, guild) {
 
         // ── Notify the user via DM that their warning was removed ────────────
         // Only attempt if we have a real User object (fetch succeeded).
+        // Track whether it succeeded so logModeration reflects reality.
+        let removalDmSent = false;
         if (targetUser && typeof targetUser.send === 'function') {
             try {
                 await sendDM(targetUser, {
                     type:           'warn_remove',
                     guild:          guild.name,
                     reason:         'Removed via warning picker',
-                    originalReason: removed.reason,
+                    originalReason: removed.reason || 'No reason recorded',
                     moderatorTag:   interaction.user.tag,
                     moderatorId:    interaction.user.id,
                     caseId:         removalCaseId,
                     remaining,
                     proof:          null
                 });
+                removalDmSent = true;
             } catch (dmErr) {
                 // Non-fatal — log and continue
                 console.error(`Failed to DM warn_remove to ${targetUser.tag}:`, dmErr);
@@ -289,7 +292,7 @@ async function handleWarnRemoveButton(interaction, guild) {
             .addFields(
                 { name: 'Removal Case ID',        value: removalCaseId,                                        inline: true  },
                 { name: 'Removed Warning ID',     value: removedCaseId,                                        inline: true  },
-                { name: 'Removed Warning Reason', value: removed.reason,                                       inline: false },
+                { name: 'Removed Warning Reason', value: removed.reason || 'No reason recorded',               inline: false },
                 { name: 'Originally Issued By',   value: `<@${removed.moderatorId}> (${removed.moderatorId})`, inline: true  },
                 { name: 'Originally Issued',      value: `<t:${ts}:F>`,                                        inline: true  },
                 { name: 'DM was sent',            value: removed.dmSent ? '✅ Yes' : '❌ No',                  inline: true  },
@@ -310,8 +313,8 @@ async function handleWarnRemoveButton(interaction, guild) {
             target:         { tag: removed.username, id: userId },
             moderator:      interaction.user,
             reason:         'Removed via warning picker',
-            originalReason: removed.reason,
-            remaining, proof: null, dmSent: false
+            originalReason: removed.reason || 'No reason recorded',
+            remaining, proof: null, dmSent: removalDmSent
         });
 
         if (remaining === 0) {

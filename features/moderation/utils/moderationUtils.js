@@ -217,11 +217,12 @@ async function sendDM(user, options) {
                 embed.setColor('#00ccff').setTitle('🗑️ A warning has been removed')
                     .setDescription(`A warning was removed from your record in **${options.guild}**`)
                     .addFields(
-                        { name: 'Case ID',            value: caseField,              inline: true  },
-                        { name: 'Moderator',          value: modField,               inline: true  },
-                        { name: 'Removal Reason',     value: options.reason,         inline: false },
-                        { name: 'Original Warning',   value: options.originalReason, inline: false },
-                        { name: 'Remaining Warnings', value: `${options.remaining}`, inline: true  }
+                        { name: 'Case ID',            value: caseField,                                        inline: true  },
+                        { name: 'Moderator',          value: modField,                                         inline: true  },
+                        { name: 'Removal Reason',     value: options.reason,                                   inline: false },
+                        // Guard against legacy DB docs that may lack a reason field
+                        { name: 'Original Warning',   value: options.originalReason || 'No reason recorded',  inline: false },
+                        { name: 'Remaining Warnings', value: `${options.remaining}`,                          inline: true  }
                     );
                 if (options.proof) {
                     embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
@@ -340,14 +341,15 @@ async function logModeration(guild, action) {
 
             case 'warn_remove':
                 embed.setColor('#00ccff').setTitle('🗑️ Warning Removed').addFields(
-                    { name: 'Case ID',            value: caseId,                             inline: true  },
-                    { name: 'Removed Warn ID',    value: action.removedCaseId || 'N/A',      inline: true  },
-                    { name: 'User',               value: targetValue,                        inline: true  },
-                    { name: 'Moderator',          value: modValue,                           inline: true  },
-                    { name: 'Removal Reason',     value: action.reason,                      inline: false },
-                    { name: 'Original Warning',   value: action.originalReason,              inline: false },
-                    { name: 'Remaining Warnings', value: `${action.remaining}`,              inline: true  },
-                    { name: 'DM Sent',            value: action.dmSent ? '✅ Yes' : '❌ No', inline: true  }
+                    { name: 'Case ID',            value: caseId,                                               inline: true  },
+                    { name: 'Removed Warn ID',    value: action.removedCaseId || 'N/A',                        inline: true  },
+                    { name: 'User',               value: targetValue,                                          inline: true  },
+                    { name: 'Moderator',          value: modValue,                                             inline: true  },
+                    { name: 'Removal Reason',     value: action.reason,                                        inline: false },
+                    // Guard against legacy DB docs that may lack a reason field
+                    { name: 'Original Warning',   value: action.originalReason || 'No reason recorded',       inline: false },
+                    { name: 'Remaining Warnings', value: `${action.remaining}`,                                inline: true  },
+                    { name: 'DM Sent',            value: action.dmSent ? '✅ Yes' : '❌ No',                  inline: true  }
                 );
                 if (action.proof) { embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false }); if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url); }
                 break;
@@ -362,9 +364,6 @@ async function logModeration(guild, action) {
 }
 
 // ─── parseMembers ────────────────────────────────────────────────────────────
-// FIX: individual resolution failures are added to a `failed` array rather
-// than aborting the whole operation. Only truly unresolvable input (bad format
-// when no allowHackBan) still returns an early error for the whole batch.
 async function parseMembers(guild, input, allowHackBan = false) {
     const ids = input.split(/[\s,]+/).filter(Boolean);
     if (!ids.length) return { success: false, message: 'No users provided', targets: [] };
@@ -381,8 +380,6 @@ async function parseMembers(guild, input, allowHackBan = false) {
             } else if (idOrTag.match(/^<@!?(\d+)>$/)) {
                 userId = idOrTag.match(/^<@!?(\d+)>$/)[1];
             } else {
-                // Invalid format — fail the whole batch so the moderator knows
-                // they passed something unparseable rather than silently skipping.
                 return { success: false, message: `Invalid user format: ${idOrTag}`, targets: [] };
             }
 
@@ -390,21 +387,16 @@ async function parseMembers(guild, input, allowHackBan = false) {
             const member = await guild.members.fetch(userId).catch(() => null);
 
             if (!member && !allowHackBan) {
-                // User exists on Discord but is not in this server.
-                // Add to failed so the caller can report it per-user.
                 failed.push({ id: userId, user, reason: `${user.tag} is not in the server.` });
                 continue;
             }
 
             targets.push({ user, member });
         } catch (error) {
-            // Could not fetch user from Discord at all.
             failed.push({ id: idOrTag, user: null, reason: `Failed to resolve user: ${idOrTag}` });
         }
     }
 
-    // If every single target failed to resolve, surface as a hard failure so
-    // the command can return an error reply instead of an empty success embed.
     if (targets.length === 0 && failed.length > 0) {
         const reasons = failed.map(f => f.reason).join(', ');
         return { success: false, message: reasons, targets: [] };

@@ -1,19 +1,36 @@
 // features/tickets/handlers/ticketControlHandler.js
+const { Buffer } = require('buffer');
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const { cleanUsername } = require('../utils/cleanup');
 
 async function handleButtonInteraction(interaction, helpers, services, CONFIG, timeout) {
     switch (interaction.customId) {
-        case 'close_ticket':       return handleCloseTicket(interaction, helpers, services, CONFIG, timeout);
+        case 'close_ticket':         return handleCloseTicket(interaction, helpers, services, CONFIG, timeout);
         case 'confirm_close_ticket': return handleConfirmClose(interaction, helpers, services, CONFIG, timeout);
         case 'cancel_close_ticket':  return handleCancelClose(interaction, helpers, services, CONFIG, timeout);
-        case 'delete_ticket':      return handleDeleteTicket(interaction, helpers, services, CONFIG, timeout);
-        case 'open_ticket':        return handleOpenTicket(interaction, helpers, services, CONFIG, timeout);
-        case 'transcript_ticket':  return handleTranscript(interaction, helpers, services, CONFIG, timeout);
+        case 'delete_ticket':        return handleDeleteTicket(interaction, helpers, services, CONFIG, timeout);
+        case 'open_ticket':          return handleOpenTicket(interaction, helpers, services, CONFIG, timeout);
+        case 'transcript_ticket':    return handleTranscript(interaction, helpers, services, CONFIG, timeout);
         default:
             clearTimeout(timeout);
             return false;
     }
+}
+
+// ─── Shared helper: find the ticket creator's user ID from channel overwrites ─
+// Returns null if not found. Guards against members who have left the guild.
+function findTicketCreatorId(interaction, staffRoleName) {
+    const channelPerms = interaction.channel.permissionOverwrites.cache;
+    for (const [id, overwrite] of channelPerms) {
+        if (overwrite.type !== 1 || id === interaction.guild.id) continue;
+        // Check cache first; member may have left — in that case treat the
+        // overwrite ID as the creator (we still have their ID for permission edits).
+        const member = interaction.guild.members.cache.get(id);
+        if (!member || !member.roles.cache.some(r => r.name === staffRoleName)) {
+            return id;
+        }
+    }
+    return null;
 }
 
 // ─── Close ────────────────────────────────────────────────────────────────────
@@ -24,25 +41,17 @@ async function handleCloseTicket(interaction, helpers, services, CONFIG, timeout
     const success = await safeDeferInteraction(interaction, true);
     if (!success) { clearTimeout(timeout); return true; }
 
-    const staffRole     = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
-    const isStaff       = staffRole && interaction.member.roles.cache.has(staffRole.id);
-    const channelPerms  = interaction.channel.permissionOverwrites.cache;
-    let ticketUserId    = null;
-
-    for (const [id, overwrite] of channelPerms) {
-        if (overwrite.type === 1 && id !== interaction.guild.id) {
-            const member = interaction.guild.members.cache.get(id);
-            if (member && !member.roles.cache.some(r => r.name === CONFIG.STAFF_ROLE_NAME)) {
-                ticketUserId = id;
-                break;
-            }
-        }
-    }
-
+    const staffRole    = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
+    const isStaff      = staffRole && interaction.member.roles.cache.has(staffRole.id);
+    const ticketUserId = findTicketCreatorId(interaction, CONFIG.STAFF_ROLE_NAME);
     const isTicketCreator = ticketUserId === interaction.user.id;
+
     if (!isStaff && !isTicketCreator) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ You can only close your own tickets or you need to be a staff member.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ You can only close your own tickets or you need to be a staff member.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
@@ -58,13 +67,11 @@ async function handleCloseTicket(interaction, helpers, services, CONFIG, timeout
 
     const confirmationMessage = await interaction.channel.send({ embeds: [confirmEmbed], components: [confirmRow] });
 
-    // FIX: write all metadata fields in a single atomic set so there is no
-    // window between two separate set() calls where partial data is visible.
     const existing = ticketService.ticketMetadata.get(interaction.channel.id) || {};
     ticketService.ticketMetadata.set(interaction.channel.id, {
         ...existing,
-        closeInitiator:       interaction.user.id,
-        ticketCreatorId:      ticketUserId,
+        closeInitiator:        interaction.user.id,
+        ticketCreatorId:       ticketUserId,
         confirmationMessageId: confirmationMessage.id
     });
 
@@ -86,7 +93,10 @@ async function handleConfirmClose(interaction, helpers, services, CONFIG, timeou
 
     if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ Only the user who initiated this action can confirm it.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ Only the user who initiated this action can confirm it.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
@@ -135,7 +145,10 @@ async function handleCancelClose(interaction, helpers, services, CONFIG, timeout
 
     if (!isStaff && (!metadata || metadata.closeInitiator !== interaction.user.id)) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ Only the user who initiated this action can cancel it.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ Only the user who initiated this action can cancel it.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
@@ -159,7 +172,10 @@ async function handleDeleteTicket(interaction, helpers, services, CONFIG, timeou
 
     if (!isStaff) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ Only staff members can delete tickets.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ Only staff members can delete tickets.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
@@ -170,18 +186,12 @@ async function handleDeleteTicket(interaction, helpers, services, CONFIG, timeou
 
     setTimeout(async () => {
         try {
-            const channelPerms = interaction.channel.permissionOverwrites.cache;
-            let ticketUserId   = null;
-            for (const [id, overwrite] of channelPerms) {
-                if (overwrite.type === 1 && id !== interaction.guild.id) {
-                    const member = interaction.guild.members.cache.get(id);
-                    if (member && !member.roles.cache.some(r => r.name === CONFIG.STAFF_ROLE_NAME)) {
-                        ticketUserId = id;
-                        break;
-                    }
-                }
+            // findTicketCreatorId returns the ID even if the member has left,
+            // so removeTicketFromTracking can still update the DB correctly.
+            const ticketUserId = findTicketCreatorId(interaction, CONFIG.STAFF_ROLE_NAME);
+            if (ticketUserId) {
+                ticketService.removeTicketFromTracking(ticketUserId, interaction.channel.id);
             }
-            if (ticketUserId) ticketService.removeTicketFromTracking(ticketUserId, interaction.channel.id);
             await interaction.channel.delete();
         } catch (error) {
             console.error('Error deleting ticket channel:', error);
@@ -205,21 +215,21 @@ async function handleOpenTicket(interaction, helpers, services, CONFIG, timeout)
 
     if (!isStaff) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ Only staff members can reopen tickets.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ Only staff members can reopen tickets.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
-    const channelPerms = interaction.channel.permissionOverwrites.cache;
-    for (const [id, overwrite] of channelPerms) {
-        if (overwrite.type === 1 && id !== interaction.guild.id) {
-            const member = interaction.guild.members.cache.get(id);
-            if (member && !member.roles.cache.some(r => r.name === CONFIG.STAFF_ROLE_NAME)) {
-                await interaction.channel.permissionOverwrites.edit(id, {
-                    ViewChannel: true, SendMessages: true, AddReactions: true
-                }).catch(console.error);
-                break;
-            }
-        }
+    // findTicketCreatorId returns the ID even if the member has left.
+    // We still restore their permission overwrite so if they rejoin they
+    // can see the ticket again; if they've left, the edit is a no-op.
+    const ticketUserId = findTicketCreatorId(interaction, CONFIG.STAFF_ROLE_NAME);
+    if (ticketUserId) {
+        await interaction.channel.permissionOverwrites.edit(ticketUserId, {
+            ViewChannel: true, SendMessages: true, AddReactions: true
+        }).catch(console.error);
     }
 
     const reopenEmbed = new EmbedBuilder()
@@ -239,7 +249,7 @@ async function handleOpenTicket(interaction, helpers, services, CONFIG, timeout)
 
 // ─── Transcript ───────────────────────────────────────────────────────────────
 async function handleTranscript(interaction, helpers, services, CONFIG, timeout) {
-    const { safeReply, safeInteractionResponse } = helpers;
+    const { safeReply, safeInteractionResponse }         = helpers;
     const { transcriptService, cacheService, ticketService } = services;
 
     const staffRole = await cacheService.getStaffRole(interaction.guild, CONFIG.STAFF_ROLE_NAME);
@@ -247,7 +257,10 @@ async function handleTranscript(interaction, helpers, services, CONFIG, timeout)
 
     if (!isStaff) {
         clearTimeout(timeout);
-        await safeReply(interaction, { content: '❌ Only staff members can generate transcripts.', flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, {
+            content: '❌ Only staff members can generate transcripts.',
+            flags: MessageFlags.Ephemeral
+        });
         return true;
     }
 
@@ -257,26 +270,21 @@ async function handleTranscript(interaction, helpers, services, CONFIG, timeout)
     if (!success) { clearTimeout(timeout); return true; }
 
     try {
-        const channelPerms = interaction.channel.permissionOverwrites.cache;
         let ticketCreator;
+        const ticketUserId = findTicketCreatorId(interaction, CONFIG.STAFF_ROLE_NAME);
 
-        for (const [id, overwrite] of channelPerms) {
-            if (overwrite.type === 1 && id !== interaction.guild.id) {
-                const member = interaction.guild.members.cache.get(id);
-                if (member && !member.roles.cache.some(r => r.name === CONFIG.STAFF_ROLE_NAME)) {
-                    try {
-                        const fetched = await interaction.guild.members.fetch(id);
-                        ticketCreator = fetched.user;
-                    } catch {
-                        ticketCreator = { username: 'Unknown', discriminator: '0000' };
-                    }
-                    break;
-                }
+        if (ticketUserId) {
+            try {
+                const fetched = await interaction.guild.members.fetch(ticketUserId);
+                ticketCreator = fetched.user;
+            } catch {
+                // Member left — still use their ID to show something useful
+                ticketCreator = { username: 'Unknown', discriminator: '0000' };
             }
         }
 
         if (!ticketCreator) {
-            const channelName        = interaction.channel.name;
+            const channelName         = interaction.channel.name;
             const usernameFromChannel = channelName.split('-').slice(1).join('-');
             const member = interaction.guild.members.cache.find(m =>
                 cleanUsername(m.user.username, m.user.id) === usernameFromChannel
@@ -284,9 +292,6 @@ async function handleTranscript(interaction, helpers, services, CONFIG, timeout)
             ticketCreator = member ? member.user : { username: 'Unknown', discriminator: '0000' };
         }
 
-        // FIX: pass ticketService.ticketMetadata so the transcript service
-        // gets the real ticket type / createdAt instead of always falling back
-        // to parsing the channel name.
         const transcriptData = await transcriptService.generateTranscript(
             interaction.channel,
             ticketCreator,
@@ -306,10 +311,10 @@ async function handleTranscript(interaction, helpers, services, CONFIG, timeout)
                 .setColor(0x7289da)
                 .addFields(
                     { name: 'Ticket Owner',   value: `${ticketCreator.username}#${ticketCreator.discriminator || '0'}`, inline: true },
-                    { name: 'Ticket Name',    value: interaction.channel.name,          inline: true },
-                    { name: 'Panel Name',     value: transcriptData.ticketType,         inline: true },
+                    { name: 'Ticket Name',    value: interaction.channel.name,               inline: true },
+                    { name: 'Panel Name',     value: transcriptData.ticketType,              inline: true },
                     { name: 'Total Messages', value: transcriptData.totalMessages.toString(), inline: true },
-                    { name: 'Closed By',      value: interaction.user.toString(),       inline: true },
+                    { name: 'Closed By',      value: interaction.user.toString(),            inline: true },
                     { name: 'Closed At',      value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                 );
 
@@ -334,8 +339,5 @@ async function handleTranscript(interaction, helpers, services, CONFIG, timeout)
 
     return true;
 }
-
-// Buffer needs to be required for the transcript send
-const { Buffer } = require('buffer');
 
 module.exports = { handleButtonInteraction };

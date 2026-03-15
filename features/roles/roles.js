@@ -31,6 +31,9 @@ function createSelectMenu(roleType, config) {
         })));
 }
 
+// Discord allows bulk-deleting up to 14 days old messages in groups of ≤100.
+// For old role panels we just delete one at a time with a small delay to stay
+// well clear of the per-channel rate limit (5 requests / 5 seconds).
 async function cleanupOldRolePanels(channel, botId) {
     try {
         const messages = await channel.messages.fetch({ limit: 100 });
@@ -42,10 +45,25 @@ async function cleanupOldRolePanels(channel, botId) {
             (msg.embeds[0].title.includes('Roles') || msg.embeds[0].title.includes('Location') ||
              msg.embeds[0].title.includes('Interest') || msg.embeds[0].title.includes('Ping'))
         );
-        if (rolePanelMessages.size > 0) {
-            for (const message of rolePanelMessages.values()) await message.delete();
-            console.log(`🧹 Cleaned up ${rolePanelMessages.size} old role panel messages`);
+
+        if (rolePanelMessages.size === 0) return;
+
+        let deleted = 0;
+        for (const message of rolePanelMessages.values()) {
+            try {
+                await message.delete();
+                deleted++;
+                // 600 ms gap keeps us well under Discord's 5 req/5 s channel limit
+                if (deleted < rolePanelMessages.size) {
+                    await new Promise(resolve => setTimeout(resolve, 600));
+                }
+            } catch (err) {
+                // Non-fatal — log and continue with remaining messages
+                console.error(`❌ Failed to delete old role panel message ${message.id}:`, err.message);
+            }
         }
+
+        console.log(`🧹 Cleaned up ${deleted} old role panel messages`);
     } catch (error) {
         console.error('❌ Error cleaning up old role panels:', error);
     }
@@ -82,7 +100,9 @@ module.exports = (client) => {
             console.log('🎭 All role panels set up successfully');
         } catch (error) {
             console.error('❌ Error setting up role panels:', error);
-            await message.reply('❌ There was an error setting up the role panels.');
+            // message has already been deleted at this point, so reply() would
+            // throw a second error. Send to the channel directly instead.
+            await message.channel.send('❌ There was an error setting up the role panels.').catch(console.error);
         }
     });
 
@@ -91,11 +111,8 @@ module.exports = (client) => {
         if (!interaction.customId.startsWith('role_select_')) return;
 
         const roleType = interaction.customId.replace('role_select_', '');
-        const config = roleConfigs[roleType];
+        const config   = roleConfigs[roleType];
 
-        // FIX: the original code had `return interaction.reply(...)` here unconditionally
-        // (before the try block), so every role selection returned an error and never
-        // processed. Now we only bail out when config is genuinely missing.
         if (!config) {
             return interaction.reply({
                 content: '❌ Invalid role configuration.',
@@ -104,14 +121,13 @@ module.exports = (client) => {
         }
 
         try {
-            // FIX: use MessageFlags.Ephemeral (integer) instead of flags: ['Ephemeral'] (array)
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             const selectedValues = interaction.values;
-            const member = interaction.member;
-            const guild = interaction.guild;
+            const member         = interaction.member;
+            const guild          = interaction.guild;
 
-            const allRoleIds = config.options.filter(opt => opt.roleId).map(opt => opt.roleId);
+            const allRoleIds   = config.options.filter(opt => opt.roleId).map(opt => opt.roleId);
             const currentRoles = member.roles.cache.filter(role => allRoleIds.includes(role.id));
 
             if (config.multiSelect) {
@@ -122,7 +138,7 @@ module.exports = (client) => {
                 if (rolesToRemove.size > 0) await member.roles.remove(rolesToRemove);
 
                 const currentRoleIds = currentRoles.map(role => role.id);
-                const rolesToAdd = selectedRoleIds.filter(roleId => !currentRoleIds.includes(roleId));
+                const rolesToAdd     = selectedRoleIds.filter(roleId => !currentRoleIds.includes(roleId));
                 if (rolesToAdd.length > 0) await member.roles.add(rolesToAdd);
 
                 const feedbackContent = selectedOptions.length > 0
@@ -133,7 +149,7 @@ module.exports = (client) => {
                 console.log(`🎭 ${member.user.tag} updated ${roleType} roles: ${selectedOptions.map(opt => opt.label).join(', ')}`);
 
             } else {
-                const selectedValue = selectedValues[0];
+                const selectedValue  = selectedValues[0];
                 const selectedOption = config.options.find(opt => opt.value === selectedValue);
 
                 if (!selectedOption) {
@@ -161,7 +177,6 @@ module.exports = (client) => {
                     await member.roles.add(roleToAdd);
                     await interaction.editReply({ content: `✅ Successfully assigned you the **${selectedOption.label}** role!` });
                 } else {
-                    // Global / no-role option — just remove all roles in category
                     if (currentRoles.size > 0) await member.roles.remove(currentRoles);
                     await interaction.editReply({
                         content: `✅ Successfully updated your ${config.title.toLowerCase()} preference to **${selectedOption.label}**!`
