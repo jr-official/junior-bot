@@ -10,6 +10,12 @@ const roleConfigs = require('./config/roleConfigs');
 
 const EMBED_COLOR = 0x5037CF;
 
+// FIX: a unique footer tag stamped on every role panel embed so cleanup can
+// identify them precisely without relying on title-word matching (which could
+// accidentally delete unrelated bot embeds whose titles contain "Roles",
+// "Location", "Interest", or "Ping").
+const ROLE_PANEL_FOOTER_TAG = 'role-panel-v1';
+
 const CATEGORY_IMAGES = {
     location: 'https://media.discordapp.net/attachments/1200439850013298780/1392884868207087666/Location_Roles_Banner.png?ex=6871289f&is=686fd71f&hm=fb4074f459ee8d44322705e1c2a47826f34bd2ebc90e0c05c620be7fffcdf458&=&format=webp&quality=lossless&width=1730&height=576',
     interest: 'https://media.discordapp.net/attachments/1200439850013298780/1392884867603103805/Interest_Roles_Banner.png?ex=6871289e&is=686fd71e&hm=009fdb9818569f6d2ce9e47220bdb8295a26cb0d7b27d1366282718516b37b80&=&format=webp&quality=lossless&width=1730&height=576',
@@ -31,20 +37,29 @@ function createSelectMenu(roleType, config) {
         })));
 }
 
-// Discord allows bulk-deleting up to 14 days old messages in groups of ≤100.
-// For old role panels we just delete one at a time with a small delay to stay
-// well clear of the per-channel rate limit (5 requests / 5 seconds).
 async function cleanupOldRolePanels(channel, botId) {
     try {
         const messages = await channel.messages.fetch({ limit: 100 });
-        const rolePanelMessages = messages.filter(msg =>
-            msg.author.id === botId &&
-            msg.embeds.length > 0 &&
-            msg.components.length > 0 &&
-            msg.embeds[0].title &&
-            (msg.embeds[0].title.includes('Roles') || msg.embeds[0].title.includes('Location') ||
-             msg.embeds[0].title.includes('Interest') || msg.embeds[0].title.includes('Ping'))
-        );
+
+        // FIX: previously matched on embed title keywords ("Roles", "Location", etc.)
+        // which could delete any bot embed with those words in its title. Now we match
+        // on the ROLE_PANEL_FOOTER_TAG stamped into the footer of every panel we send.
+        // Old panels (pre-tag) are identified by the select menu customId pattern as a
+        // fallback so a single !roles-setup cleans up legacy panels too.
+        const rolePanelMessages = messages.filter(msg => {
+            if (msg.author.id !== botId) return false;
+            if (!msg.embeds.length || !msg.components.length) return false;
+
+            // Primary: match the footer tag we stamp on all new panels
+            const hasFooterTag = msg.embeds.some(e => e.footer?.text === ROLE_PANEL_FOOTER_TAG);
+            if (hasFooterTag) return true;
+
+            // Fallback: legacy panels (no footer tag) identified by select menu customId
+            const hasRoleSelectMenu = msg.components.some(row =>
+                row.components?.some(c => c.customId?.startsWith('role_select_'))
+            );
+            return hasRoleSelectMenu;
+        });
 
         if (rolePanelMessages.size === 0) return;
 
@@ -53,12 +68,10 @@ async function cleanupOldRolePanels(channel, botId) {
             try {
                 await message.delete();
                 deleted++;
-                // 600 ms gap keeps us well under Discord's 5 req/5 s channel limit
                 if (deleted < rolePanelMessages.size) {
                     await new Promise(resolve => setTimeout(resolve, 600));
                 }
             } catch (err) {
-                // Non-fatal — log and continue with remaining messages
                 console.error(`❌ Failed to delete old role panel message ${message.id}:`, err.message);
             }
         }
@@ -89,7 +102,10 @@ module.exports = (client) => {
                     .setTitle(config.title)
                     .setColor(EMBED_COLOR)
                     .setDescription(config.description || null)
-                    .setImage(CATEGORY_IMAGES[roleType]);
+                    .setImage(CATEGORY_IMAGES[roleType])
+                    // FIX: stamp every panel with our unique footer tag so future
+                    // cleanup runs can identify them without title-word guessing.
+                    .setFooter({ text: ROLE_PANEL_FOOTER_TAG });
 
                 const row = new ActionRowBuilder().addComponents(createSelectMenu(roleType, config));
                 await message.channel.send({ embeds: [embed], components: [row] });
@@ -100,8 +116,6 @@ module.exports = (client) => {
             console.log('🎭 All role panels set up successfully');
         } catch (error) {
             console.error('❌ Error setting up role panels:', error);
-            // message has already been deleted at this point, so reply() would
-            // throw a second error. Send to the channel directly instead.
             await message.channel.send('❌ There was an error setting up the role panels.').catch(console.error);
         }
     });
@@ -156,7 +170,6 @@ module.exports = (client) => {
                     return interaction.editReply({ content: '❌ Invalid selection.' });
                 }
 
-                // Toggle off if they already have this role
                 if (selectedOption.roleId && currentRoles.has(selectedOption.roleId)) {
                     await member.roles.remove(selectedOption.roleId);
                     await interaction.editReply({ content: `✅ Successfully removed the **${selectedOption.label}** role!` });
@@ -164,7 +177,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // Remove existing roles in this category first
                 if (selectedOption.roleId && currentRoles.size > 0) {
                     await member.roles.remove(currentRoles);
                 }

@@ -1,11 +1,13 @@
 // features/moderation/utils/caseId.js
 // Generates human-readable case IDs like BAN-A3X9KQ, WARN-7ZTMP2, KICK-R5VB8W
-// Format: <TYPE_PREFIX>-<6 random uppercase alphanumeric chars>
+// Format: <TYPE_PREFIX>-<6 random uppercase hex chars>
 //
 // Uses crypto.randomBytes for better collision resistance vs Math.random().
-// 6 base-36 chars uppercased ≈ 2.18 billion combinations per type —
-// more than sufficient for audit trails, but crypto randomness gives us
-// uniform distribution with no PRNG bias.
+// 4 random bytes → 8 hex chars, first 6 taken → 16^6 = ~16.7 million combinations
+// per type. Uniform distribution with no PRNG bias.
+//
+// NOTE: the suffix is hexadecimal (0-9, A-F), not base-36. The comment in the
+// original file incorrectly described it as base-36.
 
 const { randomBytes } = require('crypto');
 

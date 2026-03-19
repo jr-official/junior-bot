@@ -71,7 +71,12 @@ module.exports = {
         const totalPages  = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
         const components  = buildPageButtons('warns_lb', page, totalPages);
         const payload     = { embeds: [embed], components };
-        interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
+        // FIX: interaction.update is only valid on non-deferred component interactions.
+        // Both the slash command path and the button handler path defer first, so
+        // the interaction is always deferred by the time we reach here — use
+        // editReply unconditionally instead of a deferred/update branch where
+        // interaction.update was unreachable dead code.
+        await interaction.editReply(payload);
     },
 
     async showUserWarnings(interaction, targetUser, page) {
@@ -80,7 +85,8 @@ module.exports = {
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const components = buildPageButtons(`warns_user_${targetUser.id}`, page, totalPages);
         const payload    = { embeds: [embed], components };
-        interaction.deferred ? await interaction.editReply(payload) : await interaction.update(payload);
+        // FIX: same as showLeaderboard — always deferred, use editReply.
+        await interaction.editReply(payload);
     }
 };
 

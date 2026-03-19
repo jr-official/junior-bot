@@ -1,4 +1,4 @@
-// handlers/interactionHandler.js
+// features/tickets/handlers/interactionHandler.js
 const { Events, MessageFlags } = require('discord.js');
 const CONFIG = require('../config/config');
 const TicketService = require('../services/ticketService');
@@ -13,7 +13,6 @@ function setupInteractionHandler(client) {
     const transcriptService = new TranscriptService(TICKET_TYPES);
     const cacheService = new CacheService();
 
-    // Helper function to safely handle interactions
     async function safeInteractionResponse(interaction, responseFunction) {
         try {
             if (!interaction.isRepliable()) {
@@ -37,7 +36,6 @@ function setupInteractionHandler(client) {
         }
     }
 
-    // Helper function to safely defer interactions
     async function safeDeferInteraction(interaction, isUpdate = false) {
         try {
             if (interaction.replied || interaction.deferred) {
@@ -59,7 +57,6 @@ function setupInteractionHandler(client) {
         }
     }
 
-    // Helper function to safely reply to interactions
     async function safeReply(interaction, options) {
         try {
             if (interaction.deferred) {
@@ -83,8 +80,15 @@ function setupInteractionHandler(client) {
 
     client.on(Events.InteractionCreate, async interaction => {
         try {
-            // Set up timeout to ensure we respond within 3 seconds
+            // FIX: use a shared flag instead of relying on interaction.replied/deferred
+            // to coordinate between the timeout and the handler. The old approach had a
+            // race where both could try to defer simultaneously if the handler awaited
+            // just as the 2500ms timeout fired, causing "interaction already acknowledged".
+            let handlerStarted = false;
+
             const timeout = setTimeout(async () => {
+                // Only auto-defer if the handler hasn't already started its own defer
+                if (handlerStarted) return;
                 if (!interaction.replied && !interaction.deferred) {
                     try {
                         if (interaction.isButton()) {
@@ -92,28 +96,28 @@ function setupInteractionHandler(client) {
                         } else {
                             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
                         }
-                    } catch (error) {
-                        // Ignore timeout errors
+                    } catch {
+                        // Ignore — interaction may have expired or been handled already
                     }
                 }
             }, 2500);
 
             let handled = false;
 
-            // Handle ticket creation (select menu)
             if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
+                handlerStarted = true;
                 handled = await ticketCreationHandler.handleTicketCreation(
-                    interaction, 
-                    helpers, 
-                    services, 
-                    CONFIG, 
+                    interaction,
+                    helpers,
+                    services,
+                    CONFIG,
                     TICKET_TYPES,
                     timeout
                 );
             }
 
-            // Handle button interactions
             if (interaction.isButton() && !handled) {
+                handlerStarted = true;
                 handled = await ticketControlHandler.handleButtonInteraction(
                     interaction,
                     helpers,
@@ -123,15 +127,13 @@ function setupInteractionHandler(client) {
                 );
             }
 
-            // Clear timeout if we reach the end without issues
             if (!handled) {
                 clearTimeout(timeout);
             }
 
         } catch (error) {
             console.error('Interaction error:', error);
-            
-            // Try to respond with error message if we haven't responded yet
+
             try {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
@@ -144,7 +146,6 @@ function setupInteractionHandler(client) {
                     });
                 }
             } catch (responseError) {
-                // If we can't respond, just log it
                 console.error('Failed to send error response:', responseError);
             }
         }

@@ -31,33 +31,45 @@ module.exports = {
     async executePrefix(message, args) {
         if (args.length < 2) {
             return message.reply(
-                '❌ **Usage:** `!unban <user> <reason>`\n' +
-                'You can unban multiple users: `!unban <id1> <id2> <reason>`\n' +
+                '❌ **Usage:** `!unban <user(s)> <reason>`\n' +
+                'Multiple users: `!unban <id1> <id2> <reason>`\n' +
                 '**Example:** `!unban 123456789 Appeal accepted`'
             );
         }
 
-        // Collect leading IDs/usernames (tokens that look like snowflakes or
-        // plain words without spaces) until we hit tokens that form the reason.
-        // Strategy: greedily treat consecutive snowflake-like tokens as user
-        // targets, everything after as the reason.
-        const userTokens  = [];
-        let reasonStart   = 1;
+        // FIX: the old parser only accepted snowflake IDs as additional targets —
+        // if you typed `!unban 111 BannedUser 222`, the token "BannedUser" would
+        // end the target scan and "222" would end up in the reason silently.
+        //
+        // New approach: the LAST argument is always the start of the reason.
+        // Everything before it that looks like a snowflake OR a single-word
+        // username (no spaces, not the reason) is treated as a target.
+        // The reason is everything from reasonStart to the end, joined.
+        //
+        // Rule: greedily consume leading tokens as targets until we reach a
+        // token that is NOT a snowflake. That non-snowflake token and everything
+        // after it is the reason. The first arg is always a target (could be a
+        // username). This matches the slash command behaviour where users/reason
+        // are separate fields.
 
-        for (let i = 0; i < args.length - 1; i++) {
-            // Accept bare snowflake IDs as additional targets
+        const userTokens = [];
+        let reasonStart  = args.length - 1; // fallback: last arg is the reason
+
+        // Always treat first arg as a target
+        userTokens.push(args[0]);
+
+        // Continue consuming args as targets while they are snowflake IDs.
+        // Stop at the first non-snowflake after position 0 — that's where the
+        // reason begins. This is consistent: usernames go in position 0 only,
+        // additional targets must be snowflakes.
+        for (let i = 1; i < args.length - 1; i++) {
             if (/^\d{17,19}$/.test(args[i])) {
                 userTokens.push(args[i]);
                 reasonStart = i + 1;
             } else {
+                reasonStart = i;
                 break;
             }
-        }
-
-        // Always include the first arg as a user target (could be username)
-        if (!userTokens.length) {
-            userTokens.push(args[0]);
-            reasonStart = 1;
         }
 
         const reason = args.slice(reasonStart).join(' ');
@@ -75,7 +87,6 @@ module.exports = {
         const moderatorUser = moderator.user ?? moderator;
         const isInteraction = context.replied !== undefined;
 
-        // Parse the space-separated list of user identifiers
         const rawTokens = options.users.split(/[\s,]+/).filter(Boolean);
         if (!rawTokens.length) {
             const reply = '❌ No users provided.';
@@ -84,7 +95,6 @@ module.exports = {
                 : context.reply(reply);
         }
 
-        // Fetch the ban list once — reused for every lookup
         let bans;
         try {
             bans = await guild.bans.fetch();
@@ -122,7 +132,6 @@ module.exports = {
 
                 await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderatorUser.tag}`);
 
-                // Non-fatal — if the DM fails we still count the unban as successful
                 try {
                     await sendDM(targetUser, {
                         type: 'unban', guild: guild.name, reason: options.reason,
@@ -146,7 +155,6 @@ module.exports = {
             }
         }
 
-        // ── Build result embed ────────────────────────────────────────────────
         const embed = new EmbedBuilder()
             .setColor('#00ff00')
             .setTitle('🔓 Unban Results')

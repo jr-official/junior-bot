@@ -170,14 +170,8 @@ module.exports = {
 
                 const caseId = generateCaseId(options.soft ? 'softban' : 'ban');
 
-                if (options.dm && target.user) {
-                    await sendDM(target.user, {
-                        type: 'ban', guild: guild.name, reason: options.reason,
-                        duration, moderatorTag: moderator.user.tag,
-                        moderatorId: moderator.user.id, proof: proofData.data, caseId
-                    });
-                }
-
+                // FIX: execute the ban BEFORE sending the DM. If the ban fails (missing
+                // perms, role hierarchy, etc.) the user won't receive a false notification.
                 await guild.members.ban(target.user, {
                     reason: `${options.reason} | Moderator: ${moderator.user.tag}`,
                     deleteMessageSeconds: options.purge_days * 24 * 60 * 60
@@ -185,6 +179,16 @@ module.exports = {
 
                 if (options.soft) {
                     await guild.members.unban(target.user, `Soft ban completed | Moderator: ${moderator.user.tag}`);
+                }
+
+                // DM sent only after the action succeeds
+                if (options.dm && target.user) {
+                    await sendDM(target.user, {
+                        type: options.soft ? 'softban' : 'ban',
+                        guild: guild.name, reason: options.reason,
+                        duration, moderatorTag: moderator.user.tag,
+                        moderatorId: moderator.user.id, proof: proofData.data, caseId
+                    });
                 }
 
                 results.successful.push({ user: target.user, member: target.member, caseId });

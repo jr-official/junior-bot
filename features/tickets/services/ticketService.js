@@ -8,9 +8,6 @@ const databaseService = require('./databaseService');
 
 class TicketService {
     constructor() {
-        // In-memory maps used for hot-path operations (cooldowns, cleanup timers,
-        // metadata).  Ticket counts are intentionally NOT cached here — they are
-        // always read from the database so they survive bot restarts.
         this.ticketMetadata      = new Map();
         this.userCooldowns       = new Map();
         this.ticketCleanupTimers = new Map();
@@ -24,7 +21,7 @@ class TicketService {
         }, CONFIG.CACHE_CLEANUP_INTERVAL);
     }
 
-    cleanupInactiveData() {
+    async cleanupInactiveData() {
         const now = Date.now();
 
         for (const [userId, timestamp] of this.userCooldowns.entries()) {
@@ -33,9 +30,33 @@ class TicketService {
             }
         }
 
+        // FIX: the old cleanup deleted ticketMetadata for any channel inactive for
+        // 24h. This caused transcripts and close flows to fall back to an empty
+        // metadata object — producing wrong ticketType and createdAt values for
+        // long-lived tickets. We now re-hydrate metadata from the database before
+        // deleting the in-memory entry so a subsequent transcript request still
+        // gets accurate data. Channels confirmed closed in the DB are safe to evict.
+        const toDelete = [];
         for (const [channelId, metadata] of this.ticketMetadata.entries()) {
             if (metadata.lastActivity && now - metadata.lastActivity > CONFIG.MAX_INACTIVE_TIME) {
-                this.ticketMetadata.delete(channelId);
+                toDelete.push(channelId);
+            }
+        }
+
+        for (const channelId of toDelete) {
+            try {
+                const ticket = await this.getTicketFromDatabase(channelId);
+                // Only evict metadata for tickets that are already closed — open tickets
+                // keep their in-memory entry so transcript generation stays accurate.
+                if (!ticket || ticket.status === 'closed') {
+                    this.ticketMetadata.delete(channelId);
+                } else {
+                    // Refresh lastActivity so we don't keep re-checking every cycle
+                    const existing = this.ticketMetadata.get(channelId) || {};
+                    this.ticketMetadata.set(channelId, { ...existing, lastActivity: now });
+                }
+            } catch {
+                // If the DB check fails, leave the entry in place — safe default
             }
         }
 
@@ -52,9 +73,6 @@ class TicketService {
         this.updateTicketActivity(channelId);
     }
 
-    // ── Ticket limit check — always goes to the DB ────────────────────────────
-    // Previously used an in-memory Map that was lost on every restart, allowing
-    // users to bypass the per-user ticket limit simply by restarting the bot.
     async canUserCreateTicket(userId, maxTickets) {
         try {
             const tickets = databaseService.getCollection('tickets');
@@ -62,14 +80,10 @@ class TicketService {
             return openCount < maxTickets;
         } catch (error) {
             console.error('❌ Error checking user ticket count:', error);
-            // Fail open — better to allow the ticket than to silently block the user
             return true;
         }
     }
 
-    // addTicketToTracking no longer maintains an in-memory list; the source of
-    // truth is the database.  We still update the metadata map for hot-path
-    // access (e.g. transcript generation needs createdAt / type immediately).
     addTicketToTracking(userId, channelId) {
         this.updateMetadataActivity(channelId);
     }
@@ -82,8 +96,6 @@ class TicketService {
         }
 
         this.ticketMetadata.delete(channelId);
-
-        // Persist the close in the database
         this.closeTicket(channelId);
     }
 

@@ -130,8 +130,11 @@ async function sendDM(user, options) {
 
         switch (options.type) {
             case 'ban':
-                embed.setColor('#ff0000').setTitle('🔨 You have been banned')
-                    .setDescription(`You have been banned from **${options.guild}**`)
+            // FIX: softban users deserve the same DM as a regular ban
+            case 'softban':
+                embed.setColor(options.type === 'softban' ? '#ff9500' : '#ff0000')
+                    .setTitle(options.type === 'softban' ? '🔨 You have been soft banned' : '🔨 You have been banned')
+                    .setDescription(`You have been ${options.type === 'softban' ? 'soft banned from' : 'banned from'} **${options.guild}**`)
                     .addFields(
                         { name: 'Case ID',   value: caseField,     inline: true  },
                         { name: 'Moderator', value: modField,       inline: true  },
@@ -220,7 +223,6 @@ async function sendDM(user, options) {
                         { name: 'Case ID',            value: caseField,                                        inline: true  },
                         { name: 'Moderator',          value: modField,                                         inline: true  },
                         { name: 'Removal Reason',     value: options.reason,                                   inline: false },
-                        // Guard against legacy DB docs that may lack a reason field
                         { name: 'Original Warning',   value: options.originalReason || 'No reason recorded',  inline: false },
                         { name: 'Remaining Warnings', value: `${options.remaining}`,                          inline: true  }
                     );
@@ -231,6 +233,8 @@ async function sendDM(user, options) {
                 break;
 
             default:
+                // Unknown DM type — log and bail rather than sending an empty embed
+                console.warn(`sendDM called with unknown type: ${options.type}`);
                 return;
         }
 
@@ -275,6 +279,8 @@ async function logModeration(guild, action) {
                 if (action.proof) { embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false }); if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url); }
                 break;
 
+            // FIX: softban was missing from logModeration — Discord was receiving an
+            // empty embed and rejecting the send with an API error.
             case 'softban':
                 embed.setColor('#ff9500').setTitle('🔨 Member Soft Banned').addFields(
                     { name: 'Case ID',   value: caseId,        inline: true  },
@@ -346,13 +352,18 @@ async function logModeration(guild, action) {
                     { name: 'User',               value: targetValue,                                          inline: true  },
                     { name: 'Moderator',          value: modValue,                                             inline: true  },
                     { name: 'Removal Reason',     value: action.reason,                                        inline: false },
-                    // Guard against legacy DB docs that may lack a reason field
                     { name: 'Original Warning',   value: action.originalReason || 'No reason recorded',       inline: false },
                     { name: 'Remaining Warnings', value: `${action.remaining}`,                                inline: true  },
                     { name: 'DM Sent',            value: action.dmSent ? '✅ Yes' : '❌ No',                  inline: true  }
                 );
                 if (action.proof) { embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false }); if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url); }
                 break;
+
+            default:
+                // FIX: unknown action type — log a warning instead of sending an empty
+                // embed that Discord will reject with a 400 API error.
+                console.warn(`logModeration called with unknown action type: ${action.type}`);
+                return caseId;
         }
 
         await logChannel.send({ embeds: [embed] });
@@ -380,7 +391,13 @@ async function parseMembers(guild, input, allowHackBan = false) {
             } else if (idOrTag.match(/^<@!?(\d+)>$/)) {
                 userId = idOrTag.match(/^<@!?(\d+)>$/)[1];
             } else {
-                return { success: false, message: `Invalid user format: ${idOrTag}`, targets: [] };
+                // FIX: previously returned a hard failure for the entire batch when a
+                // non-snowflake, non-mention token was encountered. Now we add it to
+                // the failed list and keep processing the remaining targets so a mixed
+                // input like "!ban 123456789 badusername reason" doesn't silently drop
+                // all valid targets.
+                failed.push({ id: idOrTag, user: null, reason: `Invalid user format: ${idOrTag}` });
+                continue;
             }
 
             const user   = await guild.client.users.fetch(userId);
@@ -397,9 +414,13 @@ async function parseMembers(guild, input, allowHackBan = false) {
         }
     }
 
+    // FIX: only return a hard failure when we have zero targets AND zero failed
+    // entries that could be shown to the moderator. If we have at least some
+    // failed entries, return success=true with an empty targets list so the
+    // caller can display the failures gracefully.
     if (targets.length === 0 && failed.length > 0) {
         const reasons = failed.map(f => f.reason).join(', ');
-        return { success: false, message: reasons, targets: [] };
+        return { success: false, message: reasons, targets: [], failed };
     }
 
     return { success: true, targets, failed };

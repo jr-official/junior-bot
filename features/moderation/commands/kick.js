@@ -116,6 +116,11 @@ module.exports = {
 
                 const caseId = generateCaseId('kick');
 
+                // FIX: execute the kick BEFORE sending the DM. If the kick fails
+                // the user won't receive a false notification.
+                await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
+
+                // DM sent only after the action succeeds
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'kick', guild: guild.name, reason: options.reason,
@@ -124,7 +129,6 @@ module.exports = {
                     });
                 }
 
-                await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
                 results.successful.push({ user: target.user, caseId });
 
                 await logModeration(guild, {

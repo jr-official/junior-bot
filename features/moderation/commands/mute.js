@@ -160,6 +160,11 @@ module.exports = {
 
                 const caseId = generateCaseId('mute');
 
+                // FIX: execute the timeout BEFORE sending the DM. If the timeout fails
+                // the user won't receive a false notification.
+                await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
+
+                // DM sent only after the action succeeds
                 if (options.dm && target.user) {
                     await sendDM(target.user, {
                         type: 'mute', guild: guild.name, reason: options.reason,
@@ -168,7 +173,6 @@ module.exports = {
                     });
                 }
 
-                await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
                 results.successful.push({ user: target.user, expiresAt, caseId });
 
                 await logModeration(guild, {
