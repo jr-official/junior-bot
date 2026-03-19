@@ -69,8 +69,8 @@ module.exports = {
     },
 
     async executeUnmute(context, options) {
-        const guild      = context.guild;
-        const moderator  = context.member || context.author;
+        const guild         = context.guild;
+        const moderator     = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
@@ -125,20 +125,29 @@ module.exports = {
 
                 const caseId = generateCaseId('unmute');
 
+                // User stays in server so DM order doesn't affect delivery.
+                // Track success so the result embed shows DM: ✅ or ❌.
+                let dmSent = false;
                 if (options.dm && target.user) {
-                    await sendDM(target.user, {
-                        type: 'unmute', guild: guild.name, reason: options.reason,
-                        moderatorTag: moderator.user.tag, moderatorId: moderator.user.id,
-                        proof: proofData.data, caseId
-                    });
+                    try {
+                        await sendDM(target.user, {
+                            type: 'unmute', guild: guild.name, reason: options.reason,
+                            moderatorTag: moderator.user.tag, moderatorId: moderator.user.id,
+                            proof: proofData.data, caseId
+                        });
+                        dmSent = true;
+                    } catch {
+                        dmSent = false;
+                    }
                 }
 
                 await target.member.timeout(null, `${options.reason} | Moderator: ${moderator.user.tag}`);
-                results.successful.push({ user: target.user, caseId });
+                results.successful.push({ user: target.user, caseId, dmSent });
 
                 await logModeration(guild, {
                     type: 'unmute', caseId, target: target.user,
-                    moderator: moderator.user, reason: options.reason, proof: proofData.data
+                    moderator: moderator.user, reason: options.reason,
+                    proof: proofData.data, dmSent
                 });
             } catch (error) {
                 console.error(`Failed to unmute ${target.user?.tag}:`, error);
@@ -154,7 +163,7 @@ module.exports = {
             embed.addFields({
                 name: `Unmuted (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : options.dm ? '❌' : 'skipped'}`
                 ).join('\n'),
                 inline: false
             });

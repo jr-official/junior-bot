@@ -78,8 +78,8 @@ module.exports = {
     },
 
     async executeMute(context, options) {
-        const guild      = context.guild;
-        const moderator  = context.member || context.author;
+        const guild         = context.guild;
+        const moderator     = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const parsed = parseDuration(options.duration);
@@ -160,24 +160,31 @@ module.exports = {
 
                 const caseId = generateCaseId('mute');
 
-                // FIX: execute the timeout BEFORE sending the DM. If the timeout fails
-                // the user won't receive a false notification.
-                await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
-
-                // DM sent only after the action succeeds
+                // Muted user stays in the server so DM order doesn't affect delivery,
+                // but we send before the action for consistency. We track delivery so
+                // the result embed shows DM: ✅ or ❌ rather than silently swallowing
+                // failures.
+                let dmSent = false;
                 if (options.dm && target.user) {
-                    await sendDM(target.user, {
-                        type: 'mute', guild: guild.name, reason: options.reason,
-                        duration, expiresAt, moderatorTag: moderator.user.tag,
-                        moderatorId: moderator.user.id, proof: proofData.data, caseId
-                    });
+                    try {
+                        await sendDM(target.user, {
+                            type: 'mute', guild: guild.name, reason: options.reason,
+                            duration, expiresAt, moderatorTag: moderator.user.tag,
+                            moderatorId: moderator.user.id, proof: proofData.data, caseId
+                        });
+                        dmSent = true;
+                    } catch {
+                        dmSent = false;
+                    }
                 }
 
-                results.successful.push({ user: target.user, expiresAt, caseId });
+                await target.member.timeout(parsed.ms, `${options.reason} | Moderator: ${moderator.user.tag}`);
+                results.successful.push({ user: target.user, expiresAt, caseId, dmSent });
 
                 await logModeration(guild, {
                     type: 'mute', caseId, target: target.user, moderator: moderator.user,
-                    reason: options.reason, duration, expiresAt, proof: proofData.data
+                    reason: options.reason, duration, expiresAt, proof: proofData.data,
+                    dmSent
                 });
             } catch (error) {
                 console.error(`Failed to mute ${target.user?.tag}:`, error);
@@ -193,7 +200,7 @@ module.exports = {
             embed.addFields({
                 name: `Muted (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\`\n   └ Expires: <t:${Math.floor(r.expiresAt.getTime() / 1000)}:R>`
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : options.dm ? '❌' : 'skipped'}\n   └ Expires: <t:${Math.floor(r.expiresAt.getTime() / 1000)}:R>`
                 ).join('\n'),
                 inline: false
             });

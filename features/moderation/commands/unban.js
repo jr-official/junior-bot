@@ -37,31 +37,14 @@ module.exports = {
             );
         }
 
-        // FIX: the old parser only accepted snowflake IDs as additional targets —
-        // if you typed `!unban 111 BannedUser 222`, the token "BannedUser" would
-        // end the target scan and "222" would end up in the reason silently.
-        //
-        // New approach: the LAST argument is always the start of the reason.
-        // Everything before it that looks like a snowflake OR a single-word
-        // username (no spaces, not the reason) is treated as a target.
-        // The reason is everything from reasonStart to the end, joined.
-        //
-        // Rule: greedily consume leading tokens as targets until we reach a
-        // token that is NOT a snowflake. That non-snowflake token and everything
-        // after it is the reason. The first arg is always a target (could be a
-        // username). This matches the slash command behaviour where users/reason
-        // are separate fields.
-
+        // First arg is always a target (ID or username).
+        // Additional targets must be snowflake IDs.
+        // First non-snowflake after position 0 starts the reason.
         const userTokens = [];
-        let reasonStart  = args.length - 1; // fallback: last arg is the reason
+        let reasonStart  = args.length - 1;
 
-        // Always treat first arg as a target
         userTokens.push(args[0]);
 
-        // Continue consuming args as targets while they are snowflake IDs.
-        // Stop at the first non-snowflake after position 0 — that's where the
-        // reason begins. This is consistent: usernames go in position 0 only,
-        // additional targets must be snowflakes.
         for (let i = 1; i < args.length - 1; i++) {
             if (/^\d{17,19}$/.test(args[i])) {
                 userTokens.push(args[i]);
@@ -75,10 +58,7 @@ module.exports = {
         const reason = args.slice(reasonStart).join(' ');
         if (!reason) return message.reply('❌ **Error:** Reason is required.');
 
-        await this.executeUnban(message, {
-            users:  userTokens.join(' '),
-            reason
-        });
+        await this.executeUnban(message, { users: userTokens.join(' '), reason });
     },
 
     async executeUnban(context, options) {
@@ -130,25 +110,32 @@ module.exports = {
 
                 const caseId = generateCaseId('unban');
 
+                // Unban executes FIRST. The user is not in the server when this runs,
+                // so the bot has no DM access until the unban restores the shared-server
+                // relationship. DM is attempted after and tracked — failure is non-fatal.
                 await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderatorUser.tag}`);
 
+                let dmSent = false;
                 try {
                     await sendDM(targetUser, {
                         type: 'unban', guild: guild.name, reason: options.reason,
                         moderatorTag: moderatorUser.tag, moderatorId: moderatorUser.id, caseId
                     });
+                    dmSent = true;
                 } catch (dmErr) {
                     console.error(`Failed to DM unban notice to ${targetUser.tag}:`, dmErr);
+                    dmSent = false;
                 }
 
                 await logModeration(guild, {
                     type: 'unban', caseId,
                     target:    targetUser,
                     moderator: moderatorUser,
-                    reason:    options.reason
+                    reason:    options.reason,
+                    dmSent
                 });
 
-                results.successful.push({ user: targetUser, caseId });
+                results.successful.push({ user: targetUser, caseId, dmSent });
             } catch (error) {
                 console.error(`Failed to unban ${token}:`, error);
                 results.failed.push({ token, reason: error.message });
@@ -165,7 +152,7 @@ module.exports = {
             embed.addFields({
                 name: `Unbanned (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : '❌'}`
                 ).join('\n'),
                 inline: false
             });

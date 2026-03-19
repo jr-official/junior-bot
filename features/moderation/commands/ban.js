@@ -117,8 +117,8 @@ module.exports = {
     },
 
     async executeBan(context, options) {
-        const guild      = context.guild;
-        const moderator  = context.member || context.author;
+        const guild         = context.guild;
+        const moderator     = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
@@ -152,7 +152,6 @@ module.exports = {
 
         if (isInteraction) await context.deferReply();
 
-        // Pre-populate failed list with any users parseMembers couldn't resolve
         const results = {
             successful: [],
             failed: (memberResult.failed || []).map(f => ({ user: f.user, reason: f.reason }))
@@ -170,8 +169,24 @@ module.exports = {
 
                 const caseId = generateCaseId(options.soft ? 'softban' : 'ban');
 
-                // FIX: execute the ban BEFORE sending the DM. If the ban fails (missing
-                // perms, role hierarchy, etc.) the user won't receive a false notification.
+                // DM goes out BEFORE the ban. Once banned the user leaves the server and
+                // the bot may lose DM access if they share no other server. We track
+                // whether it actually delivered so the result embed shows DM: ✅ or ❌.
+                let dmSent = false;
+                if (options.dm && target.user) {
+                    try {
+                        await sendDM(target.user, {
+                            type: options.soft ? 'softban' : 'ban',
+                            guild: guild.name, reason: options.reason,
+                            duration, moderatorTag: moderator.user.tag,
+                            moderatorId: moderator.user.id, proof: proofData.data, caseId
+                        });
+                        dmSent = true;
+                    } catch {
+                        dmSent = false;
+                    }
+                }
+
                 await guild.members.ban(target.user, {
                     reason: `${options.reason} | Moderator: ${moderator.user.tag}`,
                     deleteMessageSeconds: options.purge_days * 24 * 60 * 60
@@ -181,23 +196,14 @@ module.exports = {
                     await guild.members.unban(target.user, `Soft ban completed | Moderator: ${moderator.user.tag}`);
                 }
 
-                // DM sent only after the action succeeds
-                if (options.dm && target.user) {
-                    await sendDM(target.user, {
-                        type: options.soft ? 'softban' : 'ban',
-                        guild: guild.name, reason: options.reason,
-                        duration, moderatorTag: moderator.user.tag,
-                        moderatorId: moderator.user.id, proof: proofData.data, caseId
-                    });
-                }
-
-                results.successful.push({ user: target.user, member: target.member, caseId });
+                results.successful.push({ user: target.user, member: target.member, caseId, dmSent });
 
                 await logModeration(guild, {
                     type: options.soft ? 'softban' : 'ban', caseId,
                     target: target.user, moderator: moderator.user,
                     reason: options.reason, duration, expiresAt,
-                    proof: proofData.data, purge_days: options.purge_days
+                    proof: proofData.data, purge_days: options.purge_days,
+                    dmSent
                 });
             } catch (error) {
                 console.error(`Failed to ban ${target.user?.tag || target.id}:`, error);
@@ -215,7 +221,7 @@ module.exports = {
             embed.addFields({
                 name: `${options.soft ? 'Soft Banned' : 'Banned'} (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : options.dm ? '❌' : 'skipped'}`
                 ).join('\n'),
                 inline: false
             });
@@ -231,9 +237,9 @@ module.exports = {
         }
 
         const details = [`**Reason:** ${options.reason}`];
-        if (duration)            details.push(`**Duration:** ${formatDuration(duration)}`);
+        if (duration)               details.push(`**Duration:** ${formatDuration(duration)}`);
         if (options.purge_days > 0) details.push(`**Messages Deleted:** ${options.purge_days} days`);
-        if (proofData.data)      details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
+        if (proofData.data)         details.push(`**Proof:** ${formatProofDisplay(proofData.data)}`);
         embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
         if (proofData.data?.type === 'file' && proofData.data.isImage) embed.setImage(proofData.data.url);

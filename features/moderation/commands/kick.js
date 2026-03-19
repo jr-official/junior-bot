@@ -69,8 +69,8 @@ module.exports = {
     },
 
     async executeKick(context, options) {
-        const guild      = context.guild;
-        const moderator  = context.member || context.author;
+        const guild         = context.guild;
+        const moderator     = context.member || context.author;
         const isInteraction = context.replied !== undefined;
 
         const proofData = await handleProofData(options.proof_url, options.proof_file);
@@ -116,24 +116,29 @@ module.exports = {
 
                 const caseId = generateCaseId('kick');
 
-                // FIX: execute the kick BEFORE sending the DM. If the kick fails
-                // the user won't receive a false notification.
-                await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
-
-                // DM sent only after the action succeeds
+                // DM goes out BEFORE the kick — once removed from the server the bot
+                // may lose DM access. We track delivery so the result embed is accurate.
+                let dmSent = false;
                 if (options.dm && target.user) {
-                    await sendDM(target.user, {
-                        type: 'kick', guild: guild.name, reason: options.reason,
-                        moderatorTag: moderator.user.tag, moderatorId: moderator.user.id,
-                        proof: proofData.data, caseId
-                    });
+                    try {
+                        await sendDM(target.user, {
+                            type: 'kick', guild: guild.name, reason: options.reason,
+                            moderatorTag: moderator.user.tag, moderatorId: moderator.user.id,
+                            proof: proofData.data, caseId
+                        });
+                        dmSent = true;
+                    } catch {
+                        dmSent = false;
+                    }
                 }
 
-                results.successful.push({ user: target.user, caseId });
+                await target.member.kick(`${options.reason} | Moderator: ${moderator.user.tag}`);
+                results.successful.push({ user: target.user, caseId, dmSent });
 
                 await logModeration(guild, {
                     type: 'kick', caseId, target: target.user,
-                    moderator: moderator.user, reason: options.reason, proof: proofData.data
+                    moderator: moderator.user, reason: options.reason,
+                    proof: proofData.data, dmSent
                 });
             } catch (error) {
                 console.error(`Failed to kick ${target.user?.tag}:`, error);
@@ -149,7 +154,7 @@ module.exports = {
             embed.addFields({
                 name: `Kicked (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\``
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : options.dm ? '❌' : 'skipped'}`
                 ).join('\n'),
                 inline: false
             });
