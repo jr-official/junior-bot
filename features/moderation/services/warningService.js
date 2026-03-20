@@ -8,9 +8,13 @@ class WarningService {
 
     _col() { return databaseService.getCollection(this.collection); }
 
+    // FIX (Bug 5): addWarning now catches MongoDB duplicate key errors (code 11000)
+    // on the caseId unique index and retries once with a freshly generated ID.
+    // Previously a collision — though rare (1-in-16.7M) — would bubble up as a
+    // generic crash and show the moderator a confusing "error occurred" message
+    // with no indication of what actually went wrong.
     async addWarning(guildId, targetUser, moderatorUser, reason, proof, dmSent) {
-        const caseId = generateCaseId('warn');
-        const warning = {
+        const buildDoc = (caseId) => ({
             caseId,
             guildId,
             userId:       targetUser.id,
@@ -22,27 +26,51 @@ class WarningService {
             dmSent:   dmSent ?? false,
             createdAt: new Date(),
             active:    true
-        };
-        const result = await this._col().insertOne(warning);
-        // Return the full document with the inserted _id (already an ObjectId)
-        return { ...warning, _id: result.insertedId };
+        });
+
+        let caseId  = generateCaseId('warn');
+        let warning = buildDoc(caseId);
+
+        try {
+            const result = await this._col().insertOne(warning);
+            return { ...warning, _id: result.insertedId };
+        } catch (err) {
+            // 11000 = MongoDB duplicate key — retry once with a new ID.
+            // Any other error is re-thrown so the caller surfaces it correctly.
+            if (err.code !== 11000) throw err;
+
+            console.warn(`[WarningService] Duplicate caseId "${caseId}" — retrying with new ID`);
+            caseId  = generateCaseId('warn');
+            warning = buildDoc(caseId);
+            // If this second attempt also collides, re-throw — astronomically unlikely.
+            const result = await this._col().insertOne(warning);
+            return { ...warning, _id: result.insertedId };
+        }
     }
 
-    // Dedicated method so callers never access _col() directly.
-    // warningId is the ObjectId returned from addWarning — no conversion needed
-    // because insertedId is already an ObjectId, but we guard defensively.
+    // FIX (Bug 1): markDmSent no longer swallows all errors indiscriminately.
+    // The old version wrapped everything in try/catch and silently returned on
+    // any failure, meaning a DB outage would leave dmSent=false on a warning
+    // even when the DM was successfully delivered — permanently wrong audit data.
+    //
+    // Now only the ObjectId conversion failure is silently ignored (same as
+    // before — if the ID is malformed there's nothing useful to do). Real DB
+    // errors are allowed to propagate so the call site in warn.js can log them.
     async markDmSent(warningId, sent = true) {
-        try {
-            let objectId;
-            if (warningId instanceof ObjectId) {
-                objectId = warningId;
-            } else {
-                try { objectId = new ObjectId(warningId); } catch { return; }
+        let objectId;
+        if (warningId instanceof ObjectId) {
+            objectId = warningId;
+        } else {
+            try {
+                objectId = new ObjectId(warningId);
+            } catch {
+                // Invalid ID format — nothing to update, log and bail
+                console.warn('[WarningService] markDmSent: invalid warningId format:', warningId);
+                return;
             }
-            await this._col().updateOne({ _id: objectId }, { $set: { dmSent: sent } });
-        } catch (error) {
-            console.error('Error marking DM sent on warning:', error);
         }
+        // Real DB errors now propagate to the caller instead of being silently eaten
+        await this._col().updateOne({ _id: objectId }, { $set: { dmSent: sent } });
     }
 
     async removeWarningById(warningId) {

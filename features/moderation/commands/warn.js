@@ -90,7 +90,7 @@ module.exports = {
     },
 
     async executeWarnAdd(context, options) {
-        const guild = context.guild;
+        const guild         = context.guild;
         const moderator     = context.member || context.author;
         const moderatorUser = moderator.user ?? moderator;
         const isInteraction = context.replied !== undefined;
@@ -144,8 +144,21 @@ module.exports = {
                             proof: proofData.data, caseId
                         });
                         dmSent = true;
-                        await warningService.markDmSent(warning._id, true);
-                    } catch { dmSent = false; }
+                    } catch {
+                        dmSent = false;
+                    }
+                }
+
+                // FIX (Bug 1): markDmSent is now wrapped in its own try/catch.
+                // Previously it was called as part of the DM try block, meaning a DB
+                // failure here would be mistakenly caught by the DM catch and recorded
+                // as dmSent=false even when the DM was actually delivered. Now the two
+                // operations are independent: DM success/failure is tracked in dmSent,
+                // and the DB sync failure is logged separately without corrupting that value.
+                try {
+                    await warningService.markDmSent(warning._id, dmSent);
+                } catch (dbErr) {
+                    console.error(`[warn] Failed to persist dmSent=${dmSent} for warning ${warning._id}:`, dbErr);
                 }
 
                 results.successful.push({ user: target.user, caseId, totalWarnings, dmSent });
@@ -209,8 +222,6 @@ module.exports = {
 };
 
 // ─── Button handler (exported separately) ────────────────────────────────────
-// formatProofDisplay is explicitly imported at the top of this file via
-// require('../utils/moderationUtils') — no hidden closure dependency.
 async function handleWarnRemoveButton(interaction, guild) {
     const id = interaction.customId;
 
@@ -262,9 +273,6 @@ async function handleWarnRemoveButton(interaction, guild) {
         const removedCaseId = removed.caseId || 'N/A';
         const removalCaseId = generateCaseId('warn_remove');
 
-        // ── Notify the user via DM that their warning was removed ────────────
-        // Only attempt if we have a real User object (fetch succeeded).
-        // Track whether it succeeded so logModeration reflects reality.
         let removalDmSent = false;
         if (targetUser && typeof targetUser.send === 'function') {
             try {
@@ -281,7 +289,6 @@ async function handleWarnRemoveButton(interaction, guild) {
                 });
                 removalDmSent = true;
             } catch (dmErr) {
-                // Non-fatal — log and continue
                 console.error(`Failed to DM warn_remove to ${targetUser.tag}:`, dmErr);
             }
         }
@@ -361,7 +368,6 @@ function buildRemovePickerPage(targetUser, warnings, page) {
 
     const rows = [];
 
-    // Remove buttons row
     rows.push(new ActionRowBuilder().addComponents(
         slice.map(w => {
             const label = w.caseId || w._id.toString().slice(-6).toUpperCase();
@@ -373,7 +379,6 @@ function buildRemovePickerPage(targetUser, warnings, page) {
         })
     ));
 
-    // Pagination row (only when needed)
     if (totalPages > 1) {
         rows.push(new ActionRowBuilder().addComponents(
             new ButtonBuilder()

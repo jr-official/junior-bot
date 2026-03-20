@@ -30,12 +30,6 @@ class TicketService {
             }
         }
 
-        // FIX: the old cleanup deleted ticketMetadata for any channel inactive for
-        // 24h. This caused transcripts and close flows to fall back to an empty
-        // metadata object — producing wrong ticketType and createdAt values for
-        // long-lived tickets. We now re-hydrate metadata from the database before
-        // deleting the in-memory entry so a subsequent transcript request still
-        // gets accurate data. Channels confirmed closed in the DB are safe to evict.
         const toDelete = [];
         for (const [channelId, metadata] of this.ticketMetadata.entries()) {
             if (metadata.lastActivity && now - metadata.lastActivity > CONFIG.MAX_INACTIVE_TIME) {
@@ -46,12 +40,9 @@ class TicketService {
         for (const channelId of toDelete) {
             try {
                 const ticket = await this.getTicketFromDatabase(channelId);
-                // Only evict metadata for tickets that are already closed — open tickets
-                // keep their in-memory entry so transcript generation stays accurate.
                 if (!ticket || ticket.status === 'closed') {
                     this.ticketMetadata.delete(channelId);
                 } else {
-                    // Refresh lastActivity so we don't keep re-checking every cycle
                     const existing = this.ticketMetadata.get(channelId) || {};
                     this.ticketMetadata.set(channelId, { ...existing, lastActivity: now });
                 }
@@ -84,7 +75,15 @@ class TicketService {
         }
     }
 
-    addTicketToTracking(userId, channelId) {
+    // FIX (Bug 3): the userId parameter was silently dropped — ticket counts
+    // moved to MongoDB during a refactor, but the signature was never cleaned up.
+    // This is confusing because callers pass interaction.user.id expecting it
+    // to be used, and it isn't. The parameter has been removed. The one call
+    // site in ticketCreationHandler.js must be updated to match:
+    //
+    //   BEFORE: ticketService.addTicketToTracking(interaction.user.id, ticketChannel.id)
+    //   AFTER:  ticketService.addTicketToTracking(ticketChannel.id)
+    addTicketToTracking(channelId) {
         this.updateMetadataActivity(channelId);
     }
 

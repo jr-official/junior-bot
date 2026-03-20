@@ -7,21 +7,23 @@
 //
 // 2. ticketMetadata is accepted as an optional external argument from the caller
 //    (TicketService.ticketMetadata) with the private map kept as a fallback.
+//
+// 3. FIX (Bug 4): downloadAndEncodeImage now uses AbortSignal.timeout(10_000).
+//    Previously, fetch had no timeout. If a Discord CDN URL was slow or hung
+//    (common for expired attachments), the entire transcript generation would
+//    stall indefinitely with no way to recover. The interaction would eventually
+//    expire on Discord's side, leaving the moderator with a broken "Generating
+//    transcript..." message and no way to retry.
+//    AbortSignal.timeout is available in Node 18+ alongside the global fetch.
+//    The URL is now included in the error log so slow images are diagnosable.
 
 const { Buffer } = require('buffer');
 const { EmbedBuilder } = require('discord.js');
 const htmlUtils = require('../utils/htmlUtils');
 const CONFIG    = require('../config/config');
 
-// Maximum simultaneous image downloads per transcript generation
 const IMAGE_DOWNLOAD_CONCURRENCY = 5;
 
-/**
- * Runs an array of async tasks with a maximum concurrency limit.
- * @param {Array<() => Promise<any>>} tasks
- * @param {number} limit
- * @returns {Promise<Array<any>>}
- */
 async function runWithConcurrencyLimit(tasks, limit) {
     const results  = new Array(tasks.length);
     const iterator = tasks.entries();
@@ -50,8 +52,6 @@ class TranscriptService {
         this._localMetadata = new Map();
     }
 
-    // ── Attachment helpers ────────────────────────────────────────────────────
-
     isImageAttachment(attachment) {
         const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
         return imageExts.some(ext =>
@@ -75,21 +75,25 @@ class TranscriptService {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    /**
-     * Downloads an image and returns a base64 data URI so that the transcript
-     * HTML file is fully self-contained and does not depend on Discord CDN links
-     * that will expire.
-     */
+    // FIX (Bug 4): added AbortSignal.timeout(10_000) so a slow or hung CDN
+    // request is cancelled after 10 seconds rather than blocking forever.
+    // fetch and AbortSignal.timeout are both Node 18+ globals — no import needed,
+    // but the runtime must be Node 18 or later (document this in your README).
+    // The URL is logged on failure so it's easy to identify which image caused
+    // the timeout when reviewing logs.
     async downloadAndEncodeImage(url) {
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, {
+                signal: AbortSignal.timeout(10_000)
+            });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const buffer      = await response.arrayBuffer();
             const base64      = Buffer.from(buffer).toString('base64');
             const contentType = response.headers.get('content-type') || 'image/png';
             return `data:${contentType};base64,${base64}`;
         } catch (error) {
-            console.error('Failed to download/encode image:', error);
+            // TimeoutError (from AbortSignal) and network errors both land here
+            console.error(`[TranscriptService] Failed to download image (${url}): ${error.message ?? error}`);
             return null;
         }
     }
@@ -108,13 +112,6 @@ class TranscriptService {
         return `#${color.toString(16).padStart(6, '0')}`;
     }
 
-    // ── Main transcript generator ─────────────────────────────────────────────
-
-    /**
-     * @param {import('discord.js').TextChannel} channel
-     * @param {object} ticketCreator      – Discord User object
-     * @param {Map}    [externalMetadata] – TicketService.ticketMetadata
-     */
     async generateTranscript(channel, ticketCreator, externalMetadata) {
         if (!channel?.messages) {
             console.error('Invalid channel provided for transcript generation');
@@ -122,7 +119,6 @@ class TranscriptService {
         }
 
         try {
-            // ── Fetch all messages ────────────────────────────────────────────
             const messages = [];
             let lastMessageId;
             let requestCount = 0;
@@ -148,10 +144,7 @@ class TranscriptService {
 
             messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-            // ── Pre-download all images with concurrency limit ────────────────
-            // Collect every image attachment URL in order so we can resolve them
-            // all up-front (bounded concurrency) before building the HTML string.
-            const imageAttachments = []; // { messageId, attachmentId, url }
+            const imageAttachments = [];
             for (const message of messages) {
                 for (const attachment of message.attachments.values()) {
                     if (this.isImageAttachment(attachment)) {
@@ -167,13 +160,11 @@ class TranscriptService {
             const downloadTasks  = imageAttachments.map(a => () => this.downloadAndEncodeImage(a.url));
             const downloadedUris = await runWithConcurrencyLimit(downloadTasks, IMAGE_DOWNLOAD_CONCURRENCY);
 
-            // Build a lookup: attachmentId → data URI (or null if download failed)
             const imageDataUris = new Map();
             for (let i = 0; i < imageAttachments.length; i++) {
                 imageDataUris.set(imageAttachments[i].attachmentId, downloadedUris[i]);
             }
 
-            // ── Resolve metadata ──────────────────────────────────────────────
             const metaMap  = externalMetadata || this._localMetadata;
             const metadata = metaMap.get(channel.id) || {};
 
@@ -186,7 +177,6 @@ class TranscriptService {
                 discriminator: ticketCreator?.discriminator || '0000'
             };
 
-            // ── Build HTML ────────────────────────────────────────────────────
             let html = `<!DOCTYPE html>
 <html>
 <head>
@@ -284,7 +274,6 @@ class TranscriptService {
 <div class="messages">
     <h2>📝 Messages</h2>`;
 
-            // ── Per-message rendering ─────────────────────────────────────────
             for (const message of messages) {
                 const timestamp     = new Date(message.createdTimestamp).toLocaleString();
                 const isBot         = message.author.bot;
@@ -309,7 +298,6 @@ class TranscriptService {
                     html += `<div class="message-text">${htmlUtils.formatMessage(message.content, channel.guild)}</div>`;
                 }
 
-                // Embeds
                 for (const embed of message.embeds) {
                     const embedColor = this.discordColorToHex(embed.color);
                     html += `<div class="embed" style="border-left-color:${embedColor};">`;
@@ -371,7 +359,6 @@ class TranscriptService {
                     html += `</div>`;
                 }
 
-                // Attachments — images use the pre-downloaded data URI
                 for (const attachment of message.attachments.values()) {
                     if (this.isImageAttachment(attachment)) {
                         const dataUri = imageDataUris.get(attachment.id);
@@ -443,7 +430,6 @@ class TranscriptService {
         }
     }
 
-    // ── File icon helper ──────────────────────────────────────────────────────
     getFileIcon(filename) {
         const ext = filename.toLowerCase().split('.').pop();
         const iconMap = {
@@ -456,7 +442,6 @@ class TranscriptService {
         return iconMap[ext] || iconMap.default;
     }
 
-    // ── Convenience method used by ticketControlHandler ───────────────────────
     async sendTranscriptToLogs(interaction, transcriptData, ticketCreator) {
         try {
             const logsChannel = interaction.guild.channels.cache.get(CONFIG.TICKET_LOGS_CHANNEL_ID);

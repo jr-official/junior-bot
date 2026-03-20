@@ -26,7 +26,6 @@ async function handleTicketCreation(interaction, helpers, services, CONFIG, TICK
         return true;
     }
 
-    // canUserCreateTicket is now async (queries the DB) so we must await it
     const canCreate = await ticketService.canUserCreateTicket(interaction.user.id, CONFIG.MAX_TICKETS_PER_USER);
     if (!canCreate) {
         clearTimeout(timeout);
@@ -54,7 +53,10 @@ async function handleTicketCreation(interaction, helpers, services, CONFIG, TICK
             staffRole
         );
 
-        ticketService.addTicketToTracking(interaction.user.id, ticketChannel.id);
+        // FIX (Bug 3): removed the now-dead userId argument.
+        // addTicketToTracking no longer accepts userId since ticket counts are
+        // tracked in MongoDB — passing it was misleading and served no purpose.
+        ticketService.addTicketToTracking(ticketChannel.id);
         ticketService.setCooldown(interaction.user.id);
 
         const ticketEmbed = new EmbedBuilder()

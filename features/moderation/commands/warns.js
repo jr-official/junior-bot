@@ -56,6 +56,15 @@ module.exports = {
             }
         }
 
+        // FIX (Bug 2): added an explicit null check after the fetch block.
+        // Previously, if args[1] was provided but wasn't a valid mention or
+        // snowflake, id would be null, the fetch block would be skipped, and
+        // targetUser would remain null — causing the code to fall through to the
+        // leaderboard path silently, which is not what the moderator intended.
+        if (args[1] && !targetUser) {
+            return message.reply('❌ Could not resolve that user. Please use a mention or a valid user ID.');
+        }
+
         if (targetUser) {
             const warnings = await warningService.getUserWarnings(message.guild.id, targetUser.id);
             return message.reply({ embeds: [buildUserWarningsEmbed(targetUser, warnings, 0)] });
@@ -70,13 +79,7 @@ module.exports = {
         const embed       = buildLeaderboardEmbed(interaction.guild.name, leaderboard, page);
         const totalPages  = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
         const components  = buildPageButtons('warns_lb', page, totalPages);
-        const payload     = { embeds: [embed], components };
-        // FIX: interaction.update is only valid on non-deferred component interactions.
-        // Both the slash command path and the button handler path defer first, so
-        // the interaction is always deferred by the time we reach here — use
-        // editReply unconditionally instead of a deferred/update branch where
-        // interaction.update was unreachable dead code.
-        await interaction.editReply(payload);
+        await interaction.editReply({ embeds: [embed], components });
     },
 
     async showUserWarnings(interaction, targetUser, page) {
@@ -84,9 +87,7 @@ module.exports = {
         const embed      = buildUserWarningsEmbed(targetUser, warnings, page);
         const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const components = buildPageButtons(`warns_user_${targetUser.id}`, page, totalPages);
-        const payload    = { embeds: [embed], components };
-        // FIX: same as showLeaderboard — always deferred, use editReply.
-        await interaction.editReply(payload);
+        await interaction.editReply({ embeds: [embed], components });
     }
 };
 
@@ -113,8 +114,8 @@ async function handleWarnsButton(interaction) {
         let targetUser;
         try { targetUser = await interaction.client.users.fetch(userId); }
         catch { return interaction.editReply({ content: '❌ Could not fetch user.', embeds: [], components: [] }); }
-        const warnings   = await warningService.getUserWarnings(interaction.guild.id, userId);
-        const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
+        const warnings    = await warningService.getUserWarnings(interaction.guild.id, userId);
+        const totalPages  = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
         const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
         const embed       = buildUserWarningsEmbed(targetUser, warnings, clampedPage);
         return interaction.editReply({ embeds: [embed], components: buildPageButtons(`warns_user_${userId}`, clampedPage, totalPages) });
@@ -156,7 +157,16 @@ function buildUserWarningsEmbed(targetUser, warnings, page) {
     const embed = new EmbedBuilder()
         .setColor('#ffcc00')
         .setTitle(`⚠️ Warnings — ${targetUser.tag}`)
-        .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
+        // FIX (Bug 2): displayAvatarURL is called with optional chaining (?.)
+        // and falls back to null rather than crashing.
+        //
+        // The issue: users.fetch() can return a partial User object in some
+        // edge cases (e.g. the user has never been in a guild the bot is in),
+        // and discord.js User objects from REST fetches may behave differently
+        // from cached guild members. Using ?. means if the method is somehow
+        // absent, setThumbnail receives null and simply skips the thumbnail
+        // instead of throwing a TypeError that aborts the entire embed build.
+        .setThumbnail(targetUser.displayAvatarURL?.({ size: 128 }) ?? null)
         .setTimestamp()
         .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${warnings.length} active warning${warnings.length !== 1 ? 's' : ''}` });
 
