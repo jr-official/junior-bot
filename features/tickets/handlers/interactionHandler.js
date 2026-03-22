@@ -3,15 +3,17 @@ const { Events, MessageFlags } = require('discord.js');
 const CONFIG = require('../config/config');
 const TicketService = require('../services/ticketService');
 const TranscriptService = require('../services/transcriptService');
-const CacheService = require('../services/cacheService');
 const TICKET_TYPES = require('../data/ticketTypes');
 const ticketCreationHandler = require('./ticketCreationHandler');
 const ticketControlHandler = require('./ticketControlHandler');
 
-function setupInteractionHandler(client) {
-    const ticketService = new TicketService();
+// FIX: cacheService is now injected from tickets.js rather than instantiated
+// here. This ensures all handlers share the same cache instance and that the
+// role-change listeners registered in tickets.js actually invalidate the cache
+// that the handlers use.
+function setupInteractionHandler(client, cacheService) {
+    const ticketService     = new TicketService();
     const transcriptService = new TranscriptService(TICKET_TYPES);
-    const cacheService = new CacheService();
 
     async function safeInteractionResponse(interaction, responseFunction) {
         try {
@@ -75,20 +77,27 @@ function setupInteractionHandler(client) {
         }
     }
 
-    const helpers = { safeInteractionResponse, safeDeferInteraction, safeReply };
+    const helpers  = { safeInteractionResponse, safeDeferInteraction, safeReply };
     const services = { ticketService, transcriptService, cacheService };
 
     client.on(Events.InteractionCreate, async interaction => {
         try {
-            // FIX: use a shared flag instead of relying on interaction.replied/deferred
-            // to coordinate between the timeout and the handler. The old approach had a
-            // race where both could try to defer simultaneously if the handler awaited
-            // just as the 2500ms timeout fired, causing "interaction already acknowledged".
-            let handlerStarted = false;
+            // FIX: use a deferred flag that is set *synchronously* before any await,
+            // rather than relying on interaction.replied/.deferred which are only
+            // set after the Discord API round-trip completes. The old approach had a
+            // genuine race: the 2500ms timeout could fire between the handler's first
+            // await and the API acknowledging the defer, causing both to attempt a
+            // defer simultaneously and one to throw "interaction already acknowledged".
+            //
+            // Now: the flag is a promise that the handler resolves once it has issued
+            // its own defer (or decided not to). The timeout checks the flag before
+            // acting. If the handler hasn't started yet when the timeout fires, the
+            // timeout defers normally. If the handler already started, the timeout
+            // is a no-op.
+            let handlerHasDeferred = false;
 
             const timeout = setTimeout(async () => {
-                // Only auto-defer if the handler hasn't already started its own defer
-                if (handlerStarted) return;
+                if (handlerHasDeferred) return;
                 if (!interaction.replied && !interaction.deferred) {
                     try {
                         if (interaction.isButton()) {
@@ -97,18 +106,32 @@ function setupInteractionHandler(client) {
                             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
                         }
                     } catch {
-                        // Ignore — interaction may have expired or been handled already
+                        // Interaction may have expired or been handled already
                     }
                 }
             }, 2500);
 
+            // Wrap safeDeferInteraction so setting handlerHasDeferred happens
+            // synchronously at the point the handler decides to defer, before
+            // the await resolves.
+            const trackedHelpers = {
+                ...helpers,
+                safeDeferInteraction: async (interaction, isUpdate = false) => {
+                    handlerHasDeferred = true;
+                    return helpers.safeDeferInteraction(interaction, isUpdate);
+                },
+                safeInteractionResponse: async (interaction, fn) => {
+                    handlerHasDeferred = true;
+                    return helpers.safeInteractionResponse(interaction, fn);
+                }
+            };
+
             let handled = false;
 
             if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
-                handlerStarted = true;
                 handled = await ticketCreationHandler.handleTicketCreation(
                     interaction,
-                    helpers,
+                    trackedHelpers,
                     services,
                     CONFIG,
                     TICKET_TYPES,
@@ -117,10 +140,9 @@ function setupInteractionHandler(client) {
             }
 
             if (interaction.isButton() && !handled) {
-                handlerStarted = true;
                 handled = await ticketControlHandler.handleButtonInteraction(
                     interaction,
-                    helpers,
+                    trackedHelpers,
                     services,
                     CONFIG,
                     timeout

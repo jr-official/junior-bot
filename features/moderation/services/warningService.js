@@ -8,11 +8,8 @@ class WarningService {
 
     _col() { return databaseService.getCollection(this.collection); }
 
-    // FIX (Bug 5): addWarning now catches MongoDB duplicate key errors (code 11000)
+    // FIX (Bug 5): addWarning catches MongoDB duplicate key errors (code 11000)
     // on the caseId unique index and retries once with a freshly generated ID.
-    // Previously a collision — though rare (1-in-16.7M) — would bubble up as a
-    // generic crash and show the moderator a confusing "error occurred" message
-    // with no indication of what actually went wrong.
     async addWarning(guildId, targetUser, moderatorUser, reason, proof, dmSent) {
         const buildDoc = (caseId) => ({
             caseId,
@@ -35,27 +32,16 @@ class WarningService {
             const result = await this._col().insertOne(warning);
             return { ...warning, _id: result.insertedId };
         } catch (err) {
-            // 11000 = MongoDB duplicate key — retry once with a new ID.
-            // Any other error is re-thrown so the caller surfaces it correctly.
             if (err.code !== 11000) throw err;
-
             console.warn(`[WarningService] Duplicate caseId "${caseId}" — retrying with new ID`);
             caseId  = generateCaseId('warn');
             warning = buildDoc(caseId);
-            // If this second attempt also collides, re-throw — astronomically unlikely.
             const result = await this._col().insertOne(warning);
             return { ...warning, _id: result.insertedId };
         }
     }
 
     // FIX (Bug 1): markDmSent no longer swallows all errors indiscriminately.
-    // The old version wrapped everything in try/catch and silently returned on
-    // any failure, meaning a DB outage would leave dmSent=false on a warning
-    // even when the DM was successfully delivered — permanently wrong audit data.
-    //
-    // Now only the ObjectId conversion failure is silently ignored (same as
-    // before — if the ID is malformed there's nothing useful to do). Real DB
-    // errors are allowed to propagate so the call site in warn.js can log them.
     async markDmSent(warningId, sent = true) {
         let objectId;
         if (warningId instanceof ObjectId) {
@@ -64,12 +50,10 @@ class WarningService {
             try {
                 objectId = new ObjectId(warningId);
             } catch {
-                // Invalid ID format — nothing to update, log and bail
                 console.warn('[WarningService] markDmSent: invalid warningId format:', warningId);
                 return;
             }
         }
-        // Real DB errors now propagate to the caller instead of being silently eaten
         await this._col().updateOne({ _id: objectId }, { $set: { dmSent: sent } });
     }
 
@@ -90,9 +74,15 @@ class WarningService {
         return await this._col().countDocuments({ guildId, userId, active: true });
     }
 
+    // FIX: added a $sort stage before $group so that $last always picks the
+    // most recently created document's username. Without the sort, MongoDB
+    // processes documents in storage order (undefined), meaning a user who
+    // changed their Discord username could show their old name in the
+    // leaderboard indefinitely.
     async getGuildLeaderboard(guildId) {
         return await this._col().aggregate([
             { $match: { guildId, active: true } },
+            { $sort: { createdAt: 1 } },
             { $group: { _id: '$userId', username: { $last: '$username' }, count: { $sum: 1 } } },
             { $sort: { count: -1, _id: 1 } },
             { $project: { _id: 0, userId: '$_id', username: '$username', count: '$count' } }
@@ -104,7 +94,11 @@ class WarningService {
             await this._col().createIndexes([
                 { key: { guildId: 1, userId: 1, active: 1 } },
                 { key: { guildId: 1, active: 1 } },
-                { key: { caseId: 1 }, unique: true, sparse: true },
+                // FIX: removed `sparse: true` from the caseId index. Every document
+                // inserted by addWarning has a caseId field, so sparse does nothing
+                // except mislead developers into thinking null caseIds are intentional.
+                // A plain unique index is correct and more honest.
+                { key: { caseId: 1 }, unique: true },
                 { key: { createdAt: -1 } }
             ]);
             console.log('✅ Warning indexes ensured');

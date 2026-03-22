@@ -19,20 +19,29 @@ module.exports = {
             option.setName('reason')
                 .setDescription('Reason for the unban')
                 .setRequired(true))
+        // FIX: added dm option, consistent with every other moderation command.
+        // Previously unban always attempted a DM with no opt-out, which was
+        // inconsistent and problematic for bulk unbans.
+        .addBooleanOption(option =>
+            option.setName('dm')
+                .setDescription('Send DM to user about unban (default: true)')
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
     async executeSlash(interaction) {
         await this.executeUnban(interaction, {
             users:  interaction.options.getString('user'),
-            reason: interaction.options.getString('reason')
+            reason: interaction.options.getString('reason'),
+            dm:     interaction.options.getBoolean('dm') !== false
         });
     },
 
     async executePrefix(message, args) {
         if (args.length < 2) {
             return message.reply(
-                '❌ **Usage:** `!unban <user(s)> <reason>`\n' +
+                '❌ **Usage:** `!unban <user(s)> <reason> [options]`\n' +
                 'Multiple users: `!unban <id1> <id2> <reason>`\n' +
+                '**Options:** `--no-dm`\n' +
                 '**Example:** `!unban 123456789 Appeal accepted`'
             );
         }
@@ -55,10 +64,18 @@ module.exports = {
             }
         }
 
-        const reason = args.slice(reasonStart).join(' ');
-        if (!reason) return message.reply('❌ **Error:** Reason is required.');
+        const options = { users: userTokens.join(' '), dm: true, reason: '' };
 
-        await this.executeUnban(message, { users: userTokens.join(' '), reason });
+        const reasonParts = [];
+        for (let i = reasonStart; i < args.length; i++) {
+            if (args[i] === '--no-dm') options.dm = false;
+            else reasonParts.push(args[i]);
+        }
+
+        options.reason = reasonParts.join(' ');
+        if (!options.reason) return message.reply('❌ **Error:** Reason is required.');
+
+        await this.executeUnban(message, options);
     },
 
     async executeUnban(context, options) {
@@ -115,16 +132,19 @@ module.exports = {
                 // relationship. DM is attempted after and tracked — failure is non-fatal.
                 await guild.members.unban(targetUser, `${options.reason} | Moderator: ${moderatorUser.tag}`);
 
+                // FIX: respect the dm option, consistent with all other commands.
                 let dmSent = false;
-                try {
-                    await sendDM(targetUser, {
-                        type: 'unban', guild: guild.name, reason: options.reason,
-                        moderatorTag: moderatorUser.tag, moderatorId: moderatorUser.id, caseId
-                    });
-                    dmSent = true;
-                } catch (dmErr) {
-                    console.error(`Failed to DM unban notice to ${targetUser.tag}:`, dmErr);
-                    dmSent = false;
+                if (options.dm) {
+                    try {
+                        await sendDM(targetUser, {
+                            type: 'unban', guild: guild.name, reason: options.reason,
+                            moderatorTag: moderatorUser.tag, moderatorId: moderatorUser.id, caseId
+                        });
+                        dmSent = true;
+                    } catch (dmErr) {
+                        console.error(`Failed to DM unban notice to ${targetUser.tag}:`, dmErr);
+                        dmSent = false;
+                    }
                 }
 
                 await logModeration(guild, {
@@ -152,7 +172,7 @@ module.exports = {
             embed.addFields({
                 name: `Unbanned (${results.successful.length})`,
                 value: results.successful.map(r =>
-                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : '❌'}`
+                    `✅ **${r.user.tag}** (${r.user.id}) — \`${r.caseId}\` | DM: ${r.dmSent ? '✅' : options.dm ? '❌' : 'skipped'}`
                 ).join('\n'),
                 inline: false
             });

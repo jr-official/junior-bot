@@ -122,126 +122,127 @@ function formatModeratorField(tagOrUser, id) {
 }
 
 // ─── sendDM ──────────────────────────────────────────────────────────────────
+// FIX: the outer try/catch is removed. Each caller already wraps sendDM in its
+// own try/catch and uses the thrown error to set dmSent=false. Swallowing ALL
+// errors here (including malformed-embed errors) was hiding template bugs and
+// making dmSent unreliable. Now only the actual user.send() call can throw, and
+// callers handle it correctly.
 async function sendDM(user, options) {
-    try {
-        const embed = new EmbedBuilder().setTimestamp();
-        const modField  = formatModeratorField(options.moderatorTag, options.moderatorId);
-        const caseField = options.caseId || 'N/A';
+    const embed = new EmbedBuilder().setTimestamp();
+    const modField  = formatModeratorField(options.moderatorTag, options.moderatorId);
+    const caseField = options.caseId || 'N/A';
 
-        switch (options.type) {
-            case 'ban':
-            // FIX: softban users deserve the same DM as a regular ban
-            case 'softban':
-                embed.setColor(options.type === 'softban' ? '#ff9500' : '#ff0000')
-                    .setTitle(options.type === 'softban' ? '🔨 You have been soft banned' : '🔨 You have been banned')
-                    .setDescription(`You have been ${options.type === 'softban' ? 'soft banned from' : 'banned from'} **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,     inline: true  },
-                        { name: 'Moderator', value: modField,       inline: true  },
-                        { name: 'Reason',    value: options.reason, inline: false }
-                    );
-                if (options.duration) embed.addFields({ name: 'Duration', value: options.duration, inline: true });
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+    switch (options.type) {
+        case 'ban':
+        case 'softban':
+            embed.setColor(options.type === 'softban' ? '#ff9500' : '#ff0000')
+                .setTitle(options.type === 'softban' ? '🔨 You have been soft banned' : '🔨 You have been banned')
+                .setDescription(`You have been ${options.type === 'softban' ? 'soft banned from' : 'banned from'} **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,     inline: true  },
+                    { name: 'Moderator', value: modField,       inline: true  },
+                    { name: 'Reason',    value: options.reason, inline: false }
+                );
+            if (options.duration) embed.addFields({ name: 'Duration', value: options.duration, inline: true });
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            case 'unban':
-                embed.setColor('#00ff00').setTitle('🔓 You have been unbanned')
-                    .setDescription(`You have been unbanned from **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,     inline: true  },
-                        { name: 'Moderator', value: modField,       inline: true  },
-                        { name: 'Reason',    value: options.reason, inline: false }
-                    );
-                break;
+        case 'unban':
+            embed.setColor('#00ff00').setTitle('🔓 You have been unbanned')
+                .setDescription(`You have been unbanned from **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,     inline: true  },
+                    { name: 'Moderator', value: modField,       inline: true  },
+                    { name: 'Reason',    value: options.reason, inline: false }
+                );
+            break;
 
-            case 'kick':
-                embed.setColor('#ff6600').setTitle('👢 You have been kicked')
-                    .setDescription(`You have been kicked from **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,     inline: true  },
-                        { name: 'Moderator', value: modField,       inline: true  },
-                        { name: 'Reason',    value: options.reason, inline: false }
-                    );
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+        case 'kick':
+            embed.setColor('#ff6600').setTitle('👢 You have been kicked')
+                .setDescription(`You have been kicked from **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,     inline: true  },
+                    { name: 'Moderator', value: modField,       inline: true  },
+                    { name: 'Reason',    value: options.reason, inline: false }
+                );
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            case 'mute':
-                embed.setColor('#ffa500').setTitle('🔇 You have been muted')
-                    .setDescription(`You have been timed out in **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,                    inline: true  },
-                        { name: 'Moderator', value: modField,                      inline: true  },
-                        { name: 'Reason',    value: options.reason,                inline: false },
-                        { name: 'Duration',  value: options.duration || 'Unknown', inline: true  }
-                    );
-                if (options.expiresAt)
-                    embed.addFields({ name: 'Expires', value: `<t:${Math.floor(options.expiresAt.getTime() / 1000)}:F>`, inline: false });
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+        case 'mute':
+            embed.setColor('#ffa500').setTitle('🔇 You have been muted')
+                .setDescription(`You have been timed out in **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,                    inline: true  },
+                    { name: 'Moderator', value: modField,                      inline: true  },
+                    { name: 'Reason',    value: options.reason,                inline: false },
+                    { name: 'Duration',  value: options.duration || 'Unknown', inline: true  }
+                );
+            if (options.expiresAt)
+                embed.addFields({ name: 'Expires', value: `<t:${Math.floor(options.expiresAt.getTime() / 1000)}:F>`, inline: false });
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            case 'unmute':
-                embed.setColor('#00ff99').setTitle('🔊 You have been unmuted')
-                    .setDescription(`Your timeout has been removed in **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,     inline: true  },
-                        { name: 'Moderator', value: modField,       inline: true  },
-                        { name: 'Reason',    value: options.reason, inline: false }
-                    );
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+        case 'unmute':
+            embed.setColor('#00ff99').setTitle('🔊 You have been unmuted')
+                .setDescription(`Your timeout has been removed in **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,     inline: true  },
+                    { name: 'Moderator', value: modField,       inline: true  },
+                    { name: 'Reason',    value: options.reason, inline: false }
+                );
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            case 'warn':
-                embed.setColor('#ffcc00').setTitle('⚠️ You have received a warning')
-                    .setDescription(`You have been warned in **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',   value: caseField,     inline: true  },
-                        { name: 'Moderator', value: modField,       inline: true  },
-                        { name: 'Reason',    value: options.reason, inline: false }
-                    );
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+        case 'warn':
+            embed.setColor('#ffcc00').setTitle('⚠️ You have received a warning')
+                .setDescription(`You have been warned in **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',   value: caseField,     inline: true  },
+                    { name: 'Moderator', value: modField,       inline: true  },
+                    { name: 'Reason',    value: options.reason, inline: false }
+                );
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            case 'warn_remove':
-                embed.setColor('#00ccff').setTitle('🗑️ A warning has been removed')
-                    .setDescription(`A warning was removed from your record in **${options.guild}**`)
-                    .addFields(
-                        { name: 'Case ID',            value: caseField,                                        inline: true  },
-                        { name: 'Moderator',          value: modField,                                         inline: true  },
-                        { name: 'Removal Reason',     value: options.reason,                                   inline: false },
-                        { name: 'Original Warning',   value: options.originalReason || 'No reason recorded',  inline: false },
-                        { name: 'Remaining Warnings', value: `${options.remaining}`,                          inline: true  }
-                    );
-                if (options.proof) {
-                    embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
-                    if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
-                }
-                break;
+        case 'warn_remove':
+            embed.setColor('#00ccff').setTitle('🗑️ A warning has been removed')
+                .setDescription(`A warning was removed from your record in **${options.guild}**`)
+                .addFields(
+                    { name: 'Case ID',            value: caseField,                                        inline: true  },
+                    { name: 'Moderator',          value: modField,                                         inline: true  },
+                    { name: 'Removal Reason',     value: options.reason,                                   inline: false },
+                    { name: 'Original Warning',   value: options.originalReason || 'No reason recorded',  inline: false },
+                    { name: 'Remaining Warnings', value: `${options.remaining}`,                          inline: true  }
+                );
+            if (options.proof) {
+                embed.addFields({ name: 'Evidence', value: formatProofForDM(options.proof), inline: false });
+                if (options.proof.type === 'file' && options.proof.isImage) embed.setImage(options.proof.url);
+            }
+            break;
 
-            default:
-                // Unknown DM type — log and bail rather than sending an empty embed
-                console.warn(`sendDM called with unknown type: ${options.type}`);
-                return;
-        }
-
-        await user.send({ embeds: [embed] });
-    } catch (error) {
-        console.error(`Failed to send DM to ${user.tag}:`, error);
+        default:
+            // FIX: throw so the caller's try/catch records dmSent=false and the
+            // broken template is visible in logs rather than silently swallowed.
+            throw new Error(`sendDM called with unknown type: ${options.type}`);
     }
+
+    // Let this throw — callers catch it and set dmSent=false accordingly.
+    await user.send({ embeds: [embed] });
 }
 
 // ─── logModeration ───────────────────────────────────────────────────────────
@@ -249,6 +250,15 @@ async function logModeration(guild, action) {
     const caseId = action.caseId || generateCaseId(action.type);
 
     try {
+        // FIX: warn loudly when MOD_LOGS_CHANNEL_ID is not configured rather
+        // than silently falling through. The hard-coded fallback ID in
+        // moderationConfig.js only works in one specific server; every other
+        // deployment needs this set in .env.
+        if (!MOD_LOGS_CHANNEL_ID) {
+            console.warn('[logModeration] MOD_LOGS_CHANNEL_ID is not set. Skipping log.');
+            return caseId;
+        }
+
         let logChannel = guild.channels.cache.get(MOD_LOGS_CHANNEL_ID);
         if (!logChannel) {
             logChannel = guild.channels.cache.find(ch =>
@@ -257,7 +267,7 @@ async function logModeration(guild, action) {
             );
         }
         if (!logChannel || !logChannel.isTextBased()) {
-            console.warn('No usable mod-logs channel found, skipping log.');
+            console.warn('[logModeration] No usable mod-logs channel found. Set MOD_LOGS_CHANNEL_ID in .env.');
             return caseId;
         }
 
@@ -279,8 +289,6 @@ async function logModeration(guild, action) {
                 if (action.proof) { embed.addFields({ name: 'Evidence', value: formatProofForLog(action.proof), inline: false }); if (action.proof.type === 'file' && action.proof.isImage) embed.setThumbnail(action.proof.url); }
                 break;
 
-            // FIX: softban was missing from logModeration — Discord was receiving an
-            // empty embed and rejecting the send with an API error.
             case 'softban':
                 embed.setColor('#ff9500').setTitle('🔨 Member Soft Banned').addFields(
                     { name: 'Case ID',   value: caseId,        inline: true  },
@@ -360,9 +368,7 @@ async function logModeration(guild, action) {
                 break;
 
             default:
-                // FIX: unknown action type — log a warning instead of sending an empty
-                // embed that Discord will reject with a 400 API error.
-                console.warn(`logModeration called with unknown action type: ${action.type}`);
+                console.warn(`[logModeration] Unknown action type: "${action.type}". Skipping log to avoid empty embed rejection.`);
                 return caseId;
         }
 
@@ -391,11 +397,6 @@ async function parseMembers(guild, input, allowHackBan = false) {
             } else if (idOrTag.match(/^<@!?(\d+)>$/)) {
                 userId = idOrTag.match(/^<@!?(\d+)>$/)[1];
             } else {
-                // FIX: previously returned a hard failure for the entire batch when a
-                // non-snowflake, non-mention token was encountered. Now we add it to
-                // the failed list and keep processing the remaining targets so a mixed
-                // input like "!ban 123456789 badusername reason" doesn't silently drop
-                // all valid targets.
                 failed.push({ id: idOrTag, user: null, reason: `Invalid user format: ${idOrTag}` });
                 continue;
             }
@@ -414,10 +415,6 @@ async function parseMembers(guild, input, allowHackBan = false) {
         }
     }
 
-    // FIX: only return a hard failure when we have zero targets AND zero failed
-    // entries that could be shown to the moderator. If we have at least some
-    // failed entries, return success=true with an empty targets list so the
-    // caller can display the failures gracefully.
     if (targets.length === 0 && failed.length > 0) {
         const reasons = failed.map(f => f.reason).join(', ');
         return { success: false, message: reasons, targets: [], failed };

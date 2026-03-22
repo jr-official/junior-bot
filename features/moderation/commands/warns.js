@@ -56,21 +56,25 @@ module.exports = {
             }
         }
 
-        // FIX (Bug 2): added an explicit null check after the fetch block.
-        // Previously, if args[1] was provided but wasn't a valid mention or
-        // snowflake, id would be null, the fetch block would be skipped, and
-        // targetUser would remain null — causing the code to fall through to the
-        // leaderboard path silently, which is not what the moderator intended.
         if (args[1] && !targetUser) {
             return message.reply('❌ Could not resolve that user. Please use a mention or a valid user ID.');
         }
 
         if (targetUser) {
-            const warnings = await warningService.getUserWarnings(message.guild.id, targetUser.id);
-            return message.reply({ embeds: [buildUserWarningsEmbed(targetUser, warnings, 0)] });
+            const warnings   = await warningService.getUserWarnings(message.guild.id, targetUser.id);
+            const totalPages = Math.max(1, Math.ceil(warnings.length / DETAILS_PER_PAGE));
+            const embed      = buildUserWarningsEmbed(targetUser, warnings, 0);
+            const components = buildPageButtons(`warns_user_${targetUser.id}`, 0, totalPages);
+            // FIX: prefix command now sends paginated embeds with buttons, matching
+            // the slash command behaviour. Previously it sent a single page with no
+            // way to view warnings beyond the first 3.
+            return message.reply({ embeds: [embed], components });
         } else {
             const leaderboard = await warningService.getGuildLeaderboard(message.guild.id);
-            return message.reply({ embeds: [buildLeaderboardEmbed(message.guild.name, leaderboard, 0)] });
+            const totalPages  = Math.max(1, Math.ceil(leaderboard.length / WARNINGS_PER_PAGE));
+            const embed       = buildLeaderboardEmbed(message.guild.name, leaderboard, 0);
+            const components  = buildPageButtons('warns_lb', 0, totalPages);
+            return message.reply({ embeds: [embed], components });
         }
     },
 
@@ -157,15 +161,6 @@ function buildUserWarningsEmbed(targetUser, warnings, page) {
     const embed = new EmbedBuilder()
         .setColor('#ffcc00')
         .setTitle(`⚠️ Warnings — ${targetUser.tag}`)
-        // FIX (Bug 2): displayAvatarURL is called with optional chaining (?.)
-        // and falls back to null rather than crashing.
-        //
-        // The issue: users.fetch() can return a partial User object in some
-        // edge cases (e.g. the user has never been in a guild the bot is in),
-        // and discord.js User objects from REST fetches may behave differently
-        // from cached guild members. Using ?. means if the method is somehow
-        // absent, setThumbnail receives null and simply skips the thumbnail
-        // instead of throwing a TypeError that aborts the entire embed build.
         .setThumbnail(targetUser.displayAvatarURL?.({ size: 128 }) ?? null)
         .setTimestamp()
         .setFooter({ text: `Page ${page + 1} of ${totalPages} • ${warnings.length} active warning${warnings.length !== 1 ? 's' : ''}` });

@@ -1,21 +1,18 @@
 // features/tickets/services/transcriptService.js
 //
-// Fixes vs previous version:
+// Changes vs previous version:
 //
-// 1. Image downloads are now concurrency-limited (max 5 simultaneous fetches)
-//    so a ticket with many images cannot exhaust memory or hit CDN rate limits.
+// 1. FIX (htmlUtils XSS): lightbox and spoiler interactions now use delegated
+//    event listeners (data-lightbox / data-spoiler attributes + a single
+//    document-level listener) instead of inline onclick handlers. This allows
+//    DOMPurify to drop 'onclick' from its allowlist without breaking the UI.
 //
-// 2. ticketMetadata is accepted as an optional external argument from the caller
-//    (TicketService.ticketMetadata) with the private map kept as a fallback.
+// 2. FIX (Bug 4): downloadAndEncodeImage uses AbortSignal.timeout(10_000) so
+//    hung CDN requests are cancelled instead of blocking forever.
 //
-// 3. FIX (Bug 4): downloadAndEncodeImage now uses AbortSignal.timeout(10_000).
-//    Previously, fetch had no timeout. If a Discord CDN URL was slow or hung
-//    (common for expired attachments), the entire transcript generation would
-//    stall indefinitely with no way to recover. The interaction would eventually
-//    expire on Discord's side, leaving the moderator with a broken "Generating
-//    transcript..." message and no way to retry.
-//    AbortSignal.timeout is available in Node 18+ alongside the global fetch.
-//    The URL is now included in the error log so slow images are diagnosable.
+// 3. Image downloads are concurrency-limited (max 5 simultaneous fetches).
+//
+// 4. ticketMetadata accepted as an optional external argument.
 
 const { Buffer } = require('buffer');
 const { EmbedBuilder } = require('discord.js');
@@ -36,7 +33,7 @@ async function runWithConcurrencyLimit(tasks, limit) {
             const [index, task] = next.value;
             try {
                 results[index] = await task();
-            } catch (err) {
+            } catch {
                 results[index] = null;
             }
         }
@@ -75,24 +72,15 @@ class TranscriptService {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // FIX (Bug 4): added AbortSignal.timeout(10_000) so a slow or hung CDN
-    // request is cancelled after 10 seconds rather than blocking forever.
-    // fetch and AbortSignal.timeout are both Node 18+ globals — no import needed,
-    // but the runtime must be Node 18 or later (document this in your README).
-    // The URL is logged on failure so it's easy to identify which image caused
-    // the timeout when reviewing logs.
     async downloadAndEncodeImage(url) {
         try {
-            const response = await fetch(url, {
-                signal: AbortSignal.timeout(10_000)
-            });
+            const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const buffer      = await response.arrayBuffer();
             const base64      = Buffer.from(buffer).toString('base64');
             const contentType = response.headers.get('content-type') || 'image/png';
             return `data:${contentType};base64,${base64}`;
         } catch (error) {
-            // TimeoutError (from AbortSignal) and network errors both land here
             console.error(`[TranscriptService] Failed to download image (${url}): ${error.message ?? error}`);
             return null;
         }
@@ -177,6 +165,10 @@ class TranscriptService {
                 discriminator: ticketCreator?.discriminator || '0000'
             };
 
+            // FIX: inline onclick handlers removed from lightbox images and spoilers.
+            // Replaced with data-lightbox / data-spoiler attributes handled by
+            // delegated listeners at the bottom of the script block. This matches
+            // the DOMPurify allowlist in htmlUtils.js which no longer permits onclick.
             let html = `<!DOCTYPE html>
 <html>
 <head>
@@ -238,7 +230,7 @@ class TranscriptService {
         .code-block { background: #1e1f22; border: 1px solid #26282c; border-radius: 4px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 14px; }
         .inline-code { background: #1e1f22; border-radius: 3px; padding: 2px 4px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 14px; }
         .spoiler { background: #202225; color: transparent; border-radius: 3px; cursor: pointer; user-select: none; }
-        .spoiler:hover, .spoiler.revealed { background: #484b51; color: #dcddde; }
+        .spoiler.revealed { background: #484b51; color: #dcddde; }
         .lightbox { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,.85); cursor: pointer; }
         .lightbox img { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); max-width: 90%; max-height: 90%; border-radius: 8px; }
         .lightbox-close { position: absolute; top: 20px; right: 30px; color: #fff; font-size: 30px; font-weight: bold; cursor: pointer; z-index: 1001; }
@@ -250,14 +242,6 @@ class TranscriptService {
             .info-grid { grid-template-columns: 1fr; }
         }
     </style>
-    <script>
-        function openLightbox(src) { var lb = document.getElementById('lightbox'); document.getElementById('lightbox-img').src = src; lb.style.display = 'block'; }
-        function closeLightbox() { document.getElementById('lightbox').style.display = 'none'; }
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('lightbox').addEventListener('click', function(e) { if (e.target === this) closeLightbox(); });
-            document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLightbox(); });
-        });
-    </script>
 </head>
 <body>
 <div class="header">
@@ -330,9 +314,10 @@ class TranscriptService {
                         html += `</div>`;
                     }
                     if (embed.image) {
+                        // FIX: data-lightbox attribute instead of inline onclick
                         html += `<div class="image-attachment">
                             <img src="${htmlUtils.sanitize(embed.image.url)}" alt="Embed Image"
-                                 onclick="openLightbox('${htmlUtils.sanitize(embed.image.url)}')"
+                                 data-lightbox="${htmlUtils.sanitize(embed.image.url)}"
                                  onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
                             <div style="display:none;color:#f23f43;">❌ Image failed to load</div>
                         </div>`;
@@ -341,7 +326,7 @@ class TranscriptService {
                         html += `<div class="image-attachment">
                             <img src="${htmlUtils.sanitize(embed.thumbnail.url)}" alt="Thumbnail"
                                  style="max-width:80px;max-height:80px;float:right;"
-                                 onclick="openLightbox('${htmlUtils.sanitize(embed.thumbnail.url)}')"
+                                 data-lightbox="${htmlUtils.sanitize(embed.thumbnail.url)}"
                                  onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
                             <div style="display:none;color:#f23f43;">❌ Thumbnail failed to load</div>
                         </div>`;
@@ -365,7 +350,7 @@ class TranscriptService {
                         if (dataUri) {
                             html += `<div class="image-attachment">
                                 <img src="${dataUri}" alt="${htmlUtils.sanitize(attachment.name)}"
-                                     onclick="openLightbox(this.src)"
+                                     data-lightbox="self"
                                      onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
                                 <div style="display:none;color:#f23f43;">❌ Image failed to load: ${htmlUtils.sanitize(attachment.name)}</div>
                                 <div class="image-caption">
@@ -411,10 +396,51 @@ class TranscriptService {
 
             html += `
 </div>
-<div id="lightbox" class="lightbox" onclick="closeLightbox()">
-    <span class="lightbox-close" onclick="closeLightbox()">&times;</span>
+<div id="lightbox" class="lightbox">
+    <span class="lightbox-close" id="lightbox-close">&times;</span>
     <img id="lightbox-img" src="" alt="Lightbox Image">
 </div>
+<script>
+// FIX: delegated event listeners replace inline onclick handlers, matching the
+// DOMPurify allowlist in htmlUtils.js which no longer permits onclick.
+(function() {
+    function openLightbox(src) {
+        document.getElementById('lightbox-img').src = src;
+        document.getElementById('lightbox').style.display = 'block';
+    }
+    function closeLightbox() {
+        document.getElementById('lightbox').style.display = 'none';
+    }
+
+    document.addEventListener('click', function(e) {
+        var lb = document.getElementById('lightbox');
+
+        // Close on backdrop or close button
+        if (e.target === lb || e.target.id === 'lightbox-close') {
+            closeLightbox();
+            return;
+        }
+
+        // Open on any image tagged data-lightbox
+        var img = e.target.closest('[data-lightbox]');
+        if (img) {
+            var src = img.getAttribute('data-lightbox') === 'self' ? img.src : img.getAttribute('data-lightbox');
+            openLightbox(src);
+            return;
+        }
+
+        // Toggle spoilers
+        var spoiler = e.target.closest('[data-spoiler]');
+        if (spoiler) {
+            spoiler.classList.toggle('revealed');
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeLightbox();
+    });
+}());
+</script>
 </body>
 </html>`;
 
