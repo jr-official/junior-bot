@@ -13,10 +13,14 @@
     "dompurify": "^3.0.6",
     "dotenv": "^16.6.1",
     "jsdom": "^23.0.1",
-    "mongodb": "^6.17.0"
+    "mongodb": "^6.17.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "discord",

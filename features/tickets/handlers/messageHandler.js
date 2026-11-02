@@ -8,6 +8,7 @@ const TICKET_TYPES = require('../data/ticketTypes');
 function setupMessageHandler(client) {
     client.on(Events.MessageCreate, async message => {
         if (message.author.bot) return;
+        if (!message.guild) return; // guild-only; DMs are enabled for other features
 
         if (message.content === '!setup-tickets') {
             try {
