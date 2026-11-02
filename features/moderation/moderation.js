@@ -81,7 +81,14 @@ module.exports = (client) => {
         try {
             const commands = [];
             for (const command of client.moderationCommands.values()) {
-                if (command.slashCommand) commands.push(command.slashCommand.toJSON());
+                if (command.slashCommand) {
+                    const json = command.slashCommand.toJSON();
+                    // Keep moderation guild-only even if the app has User Install enabled
+                    // in the Developer Portal (they rely on interaction.member).
+                    json.integration_types = [0];   // GuildInstall
+                    json.contexts = [0];            // Guild
+                    commands.push(json);
+                }
             }
             // Slash commands contributed by other features (e.g. media). Must be part of
             // this single commands.set() call or they would be wiped on registration.
