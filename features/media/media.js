@@ -30,7 +30,11 @@ const slashCommand = new SlashCommandBuilder()
         InteractionContextType.BotDM,
         InteractionContextType.PrivateChannel
     )
-    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
+    // GuildInstall: works where the bot is a member (servers, DM with the bot).
+    // UserInstall: lets an allowed user add the app to their own account so /media
+    // works in any DM / group DM / server (slash command only — bots get no message
+    // events there, so !sticker_x cannot work in those places).
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall);
 
 module.exports = (client) => {
     if (config.INVALID_USER_IDS.length) {

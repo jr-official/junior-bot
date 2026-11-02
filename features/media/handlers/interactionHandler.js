@@ -10,6 +10,7 @@ const uploadService = require('../services/uploadService');
 const { isAllowed } = require('../services/accessService');
 const { MediaError, AccessDeniedError } = require('../utils/errors');
 const { FILTERS } = require('../utils/mediaUtils');
+const { InteractionContextType } = require('discord.js');
 const { listView, itemView, confirmDeleteView, cid } = require('../ui/libraryView');
 
 const EPHEMERAL = MessageFlags.Ephemeral;
@@ -60,6 +61,13 @@ async function sendToChannel(interaction, userId, itemId) {
     const item   = await mediaService.getItem(userId, itemId);
     const buffer = await mediaService.getFileBuffer(userId, item);
     const payload = { files: [new AttachmentBuilder(buffer, { name: `${item.name}.${item.ext}` })] };
+
+    // In DMs/group DMs between users (user-installed app) the bot is not a member
+    // of the channel and cannot post itself — reply publicly via the interaction.
+    if (interaction.context === InteractionContextType.PrivateChannel) {
+        await interaction.followUp(payload);
+        return;
+    }
 
     let channel = interaction.channel;
     if (!channel && interaction.channelId) {
