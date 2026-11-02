@@ -12,6 +12,8 @@ Personal libraries for a fixed allow-list of users. Each user's library is priva
 ## Use
 - `/media` – opens your library (browse, preview, send, rename, delete).
 - `/media file:<upload> name:<name> [type:image|gif|sticker]` – add an item. Stickers are resized to fit 320×320.
+- `/sticker name:<name>` – same as the prefix command, with autocomplete; also works in DMs with friends
+  (needs User Install enabled for the app, see below).
 - `!sticker_<name>` (also `!gif_<name>`, `!img_<name>`) – sends your item; the command message is deleted
   where Discord allows (servers with Manage Messages; never in DMs).
 

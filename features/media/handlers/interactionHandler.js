@@ -9,7 +9,7 @@ const mediaService = require('../services/mediaService');
 const uploadService = require('../services/uploadService');
 const { isAllowed } = require('../services/accessService');
 const { MediaError, AccessDeniedError } = require('../utils/errors');
-const { FILTERS } = require('../utils/mediaUtils');
+const { FILTERS, TYPE_META } = require('../utils/mediaUtils');
 const { InteractionContextType } = require('discord.js');
 const { listView, itemView, confirmDeleteView, cid } = require('../ui/libraryView');
 
@@ -55,6 +55,14 @@ function canPost(channel) {
     return perms.has([PermissionFlagsBits.ViewChannel, send, PermissionFlagsBits.AttachFiles]);
 }
 
+async function resolveChannel(interaction) {
+    let channel = interaction.channel;
+    if (!channel && interaction.channelId) {
+        channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+    }
+    return channel;
+}
+
 // Posts the bare file into the channel (no "X used /media" header, no text).
 // Falls back to a public follow-up if the bot can't post there itself.
 async function sendToChannel(interaction, userId, itemId) {
@@ -69,10 +77,7 @@ async function sendToChannel(interaction, userId, itemId) {
         return;
     }
 
-    let channel = interaction.channel;
-    if (!channel && interaction.channelId) {
-        channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
-    }
+    const channel = await resolveChannel(interaction);
 
     if (canPost(channel)) {
         try {
@@ -108,6 +113,58 @@ async function handleSlash(interaction) {
         await showList(interaction, userId, 'all', 0);
     } catch (err) {
         await handleError(interaction, err, { editInstead: true });
+    }
+}
+
+// ── /sticker <name> (slash equivalent of !sticker_<name>; works in friend DMs) ──
+async function handleSticker(interaction) {
+    const userId = interaction.user.id;
+    if (!isAllowed(userId)) {
+        return interaction.reply({ content: DENIED_TEXT, flags: EPHEMERAL });
+    }
+
+    try {
+        const name = interaction.options.getString('name', true);
+        const item = await mediaService.findByName(userId, name);
+        if (!item) {
+            return await interaction.reply({ content: `❌ No item named \`${name}\` in your library.`, flags: EPHEMERAL });
+        }
+
+        const channel = await resolveChannel(interaction);
+        const direct = interaction.context !== InteractionContextType.PrivateChannel && canPost(channel);
+
+        if (direct) {
+            // Bot can post itself: send the bare file, then remove the "thinking…" reply.
+            await interaction.deferReply({ flags: EPHEMERAL });
+            const buffer = await mediaService.getFileBuffer(userId, item);
+            try {
+                await channel.send({ files: [new AttachmentBuilder(buffer, { name: `${item.name}.${item.ext}` })] });
+                await interaction.deleteReply().catch(() => {});
+            } catch (err) {
+                console.warn('[media] /sticker channel.send failed:', err.message);
+                await interaction.editReply({ content: '❌ I can\'t post in this channel.' });
+            }
+        } else {
+            // Friend DMs / servers without the bot: the interaction itself carries the file
+            // (Discord shows a small "used /sticker" header — unavoidable there).
+            await interaction.deferReply();
+            const buffer = await mediaService.getFileBuffer(userId, item);
+            await interaction.editReply({ files: [new AttachmentBuilder(buffer, { name: `${item.name}.${item.ext}` })] });
+        }
+    } catch (err) {
+        await handleError(interaction, err, { editInstead: interaction.deferred && !interaction.replied });
+    }
+}
+
+async function handleAutocomplete(interaction) {
+    try {
+        if (!isAllowed(interaction.user.id)) return await interaction.respond([]);
+        const focused = interaction.options.getFocused();
+        const rows = await mediaService.searchNames(interaction.user.id, focused);
+        await interaction.respond(rows.map(r => ({ name: `${TYPE_META[r.type].emoji} ${r.name}`, value: r.name })));
+    } catch (err) {
+        if (err.code !== 10062) console.error('[media] autocomplete error:', err.message);
+        await interaction.respond([]).catch(() => {});
     }
 }
 
@@ -251,4 +308,4 @@ async function handleError(interaction, err, { editInstead = false, refreshList 
     await notify(interaction, '❌ Something went wrong. Please try again.');
 }
 
-module.exports = { handleSlash, handleComponent, handleModal };
+module.exports = { handleSlash, handleSticker, handleAutocomplete, handleComponent, handleModal };

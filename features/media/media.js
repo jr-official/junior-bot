@@ -36,6 +36,21 @@ const slashCommand = new SlashCommandBuilder()
     // events there, so !sticker_x cannot work in those places).
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall);
 
+const stickerCommand = new SlashCommandBuilder()
+    .setName('sticker')
+    .setDescription('Send one of your saved stickers/images/GIFs (works in any DM, even without the bot)')
+    .addStringOption(o => o.setName('name')
+        .setDescription('Name of the item to send')
+        .setMaxLength(config.NAME_MAX_LENGTH)
+        .setAutocomplete(true)
+        .setRequired(true))
+    .setContexts(
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+    )
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall);
+
 module.exports = (client) => {
     if (config.INVALID_USER_IDS.length) {
         console.warn('⚠️  [media] Ignoring invalid MEDIA_ALLOWED_USER_IDS entries:', config.INVALID_USER_IDS.join(', '));
@@ -48,7 +63,7 @@ module.exports = (client) => {
     // Slash commands are registered together by the moderation feature (a single
     // commands.set() call replaces ALL global commands, so they must share one list).
     // Media must therefore be initialised BEFORE moderation in main.js.
-    (client.extraSlashCommands ||= []).push(slashCommand);
+    (client.extraSlashCommands ||= []).push(slashCommand, stickerCommand);
 
     client.once(Events.ClientReady, async () => {
         try {
@@ -60,8 +75,13 @@ module.exports = (client) => {
 
     client.on(Events.InteractionCreate, async (interaction) => {
         try {
+            if (interaction.isAutocomplete()) {
+                if (interaction.commandName === 'sticker') await interactionHandler.handleAutocomplete(interaction);
+                return;
+            }
             if (interaction.isChatInputCommand()) {
                 if (interaction.commandName === 'media') await interactionHandler.handleSlash(interaction);
+                else if (interaction.commandName === 'sticker') await interactionHandler.handleSticker(interaction);
                 return;
             }
             const id = interaction.customId;

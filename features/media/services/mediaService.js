@@ -124,6 +124,15 @@ class MediaService {
         return this._items().findOne({ ownerId, name: n.name });
     }
 
+    // Autocomplete helper: names containing the typed text (max 25, Discord's limit).
+    async searchNames(ownerId, text) {
+        assertAllowed(ownerId);
+        const escaped = String(text || '').toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 64);
+        const filter = escaped ? { ownerId, name: { $regex: escaped } } : { ownerId };
+        const rows = await this._items().find(filter).sort({ name: 1 }).limit(25).toArray();
+        return rows.map(r => ({ name: r.name, type: r.type }));
+    }
+
     async getFileBuffer(ownerId, item) {
         assertAllowed(ownerId);
         if (!item || item.ownerId !== ownerId) throw new MediaError('That item no longer exists.', 'NOT_FOUND');
