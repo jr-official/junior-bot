@@ -1,11 +1,12 @@
 // main.js
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 require('dotenv').config();
 
 const databaseService = require('./features/tickets/services/databaseService');
 const ticketsFeature   = require('./features/tickets/tickets');
 const moderationFeature = require('./features/moderation/moderation');
 const rolesFeature     = require('./features/roles/roles');
+const mediaFeature     = require('./features/media/media');
 
 const client = new Client({
     intents: [
@@ -13,8 +14,10 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildBans
-    ]
+        GatewayIntentBits.GuildBans,
+        GatewayIntentBits.DirectMessages   // media library: prefix commands in DMs
+    ],
+    partials: [Partials.Channel]           // required to receive DM messages
 });
 
 async function initializeBot() {
@@ -22,6 +25,9 @@ async function initializeBot() {
         await databaseService.connect();
 
         ticketsFeature(client);
+        // Media MUST be initialised before moderation: moderation registers all
+        // slash commands in one call and picks up client.extraSlashCommands.
+        mediaFeature(client);
         moderationFeature(client);
         rolesFeature(client);
 

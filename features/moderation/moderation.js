@@ -83,6 +83,9 @@ module.exports = (client) => {
             for (const command of client.moderationCommands.values()) {
                 if (command.slashCommand) commands.push(command.slashCommand.toJSON());
             }
+            // Slash commands contributed by other features (e.g. media). Must be part of
+            // this single commands.set() call or they would be wiped on registration.
+            for (const extra of client.extraSlashCommands ?? []) commands.push(extra.toJSON());
             await registerCommandsIfChanged(client, commands);
             await warningService.ensureIndexes();
         } catch (error) {
@@ -144,6 +147,7 @@ module.exports = (client) => {
     // ── Prefix command handler ────────────────────────────────────────────────
     client.on(Events.MessageCreate, async (message) => {
         if (message.author.bot) return;
+        if (!message.guild) return; // guild-only; DMs are enabled for other features
         if (!message.content.startsWith(PREFIX)) return;
 
         const args        = message.content.slice(PREFIX.length).trim().split(/ +/);

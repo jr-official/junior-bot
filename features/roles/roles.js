@@ -85,6 +85,7 @@ async function cleanupOldRolePanels(channel, botId) {
 module.exports = (client) => {
     client.on('messageCreate', async (message) => {
         if (message.author.bot) return;
+        if (!message.guild) return; // guild-only; DMs are enabled for other features
         if (!message.content.startsWith('!roles-setup')) return;
 
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
