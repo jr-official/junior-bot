@@ -14,9 +14,10 @@ Personal libraries for a fixed allow-list of users. Each user's library is priva
 - `/media file:<upload> name:<name> [type:image|gif|sticker]` – add an item. Stickers are resized to fit 320×320.
 - `/sticker name:<name>` – same as the prefix command, with autocomplete; also works in DMs with friends
   (needs User Install enabled for the app, see below).
+- **Share button:** on any of your own items, **🌐 Share** copies it into the shared library (you can pick the shared name).
 - **Shared library:** `/media shared:true` opens it (or adds when combined with `file`/`name`); `!shared_<name>` and
   `/sticker library:shared` send from it. Every allowed user can add and use items; each item shows who added it, and
-  only that person can rename/delete it. Quota: `MEDIA_MAX_SHARED_MB` (40) / `MEDIA_MAX_SHARED_ITEMS` (100).
+  only that person can rename/delete it. Quota: `MEDIA_MAX_SHARED_MB` (150) / `MEDIA_MAX_SHARED_ITEMS` (300).
 - `!sticker_<name>` (also `!gif_<name>`, `!img_<name>`) – sends your item; the command message is deleted
   where Discord allows (servers with Manage Messages; never in DMs).
 
