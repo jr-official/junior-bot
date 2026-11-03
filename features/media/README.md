@@ -18,8 +18,13 @@ Personal libraries for a fixed allow-list of users. Each user's library is priva
 - **Shared library:** `/media shared:true` opens it (or adds when combined with `file`/`name`); `!shared_<name>` and
   `/sticker library:shared` send from it. Every allowed user can add and use items; each item shows who added it, and
   only that person can rename/delete it. Quota: `MEDIA_MAX_SHARED_MB` (150) / `MEDIA_MAX_SHARED_ITEMS` (300).
+- **Public menu:** `/shared` or `!shared` posts the shared library as a normal (visible-to-everyone) message in the
+  chat. Approved users can pick an item to preview/send it (the preview is private to whoever clicked).
 - `!sticker_<name>` (also `!gif_<name>`, `!img_<name>`) – sends your item; the command message is deleted
   where Discord allows (servers with Manage Messages; never in DMs).
+
+## Troubleshooting
+Set `MEDIA_DEBUG=1` in Railway to log every prefix command the bot sees (DM or server) and why it was ignored.
 
 ## Security
 Allow-list is enforced in every handler and again in `mediaService` (all queries are scoped by `ownerId`).

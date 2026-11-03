@@ -91,6 +91,45 @@ function listView({ items, total, pages, page, filter, usage, scope = 'personal'
     return { content: '', embeds: [embed], components, files: [], attachments: [] };
 }
 
+// Public (non-ephemeral) shared-library menu posted into a chat. It is a static
+// snapshot: picking an item or pressing Browse opens an EPHEMERAL view for whoever
+// clicked, so the public message itself never changes.
+function publicSharedView({ items, total, usage }) {
+    const embed = new EmbedBuilder()
+        .setColor(config.EMBED_COLOR)
+        .setTitle('🌐 Shared library')
+        .setFooter({ text: 'Send: !shared_<name> or /sticker library:shared  ·  Only approved users can use this menu' });
+
+    const lines = [`${total} item${total === 1 ? '' : 's'} · ${usageLine(usage)}`, ''];
+    if (items.length) {
+        lines.push(items.map(i => `${TYPE_META[i.type].emoji} \`${i.name}\` — ${i.addedByName}`).join('\n'));
+        if (total > items.length) lines.push('', `…and ${total - items.length} more. Press **Browse all** to see everything.`);
+        lines.push('', 'Pick an item to preview or send it.');
+    } else {
+        lines.push('The shared library is empty. Add something with `/media shared:true file:<upload> name:<name>`.');
+    }
+    embed.setDescription(clip(lines.join('\n'), 4000));
+
+    const components = [];
+    if (items.length) {
+        components.push(new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId(cid('pubpick', 's'))
+                .setPlaceholder('Select an item…')
+                .addOptions(items.map(i => ({
+                    label: i.name,
+                    value: String(i._id),
+                    description: clip(`${TYPE_META[i.type].label} · ${formatBytes(i.size)} · added by ${i.addedByName}`, 100),
+                    emoji: TYPE_META[i.type].emoji
+                })))
+        ));
+    }
+    components.push(new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(cid('pubopen', 's')).setLabel('📚 Browse all').setStyle(ButtonStyle.Primary)
+    ));
+    return { embeds: [embed], components };
+}
+
 function itemView(item, buffer, { filter, page, content = '', viewerId }) {
     const meta = TYPE_META[item.type];
     const shared = item.ownerId === config.SHARED_OWNER;
@@ -156,4 +195,4 @@ function confirmDeleteView(item, { filter, page }) {
     };
 }
 
-module.exports = { cid, scopeCode, scopeFromCode, listView, itemView, confirmDeleteView };
+module.exports = { cid, scopeCode, scopeFromCode, listView, publicSharedView, itemView, confirmDeleteView };
