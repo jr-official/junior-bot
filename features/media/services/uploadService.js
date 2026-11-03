@@ -49,8 +49,8 @@ async function download(url) {
     }
 }
 
-async function addFromAttachment(ownerId, { attachment, name, type }) {
-    assertAllowed(ownerId);
+async function addFromAttachment(userId, { attachment, name, type, scope = 'personal', addedByName }) {
+    assertAllowed(userId);
 
     if (attachment.size > config.MAX_FILE_BYTES) {
         throw new MediaError(`File is too large (max ${formatBytes(config.MAX_FILE_BYTES)}).`);
@@ -72,7 +72,9 @@ async function addFromAttachment(ownerId, { attachment, name, type }) {
 
     const processed = await imageProcessor.process(raw, info, finalType);
 
-    return mediaService.addItem(ownerId, {
+    return mediaService.addItem(userId, {
+        scope,
+        addedByName,
         name: n.name,
         type: finalType,
         buffer: processed.buffer,

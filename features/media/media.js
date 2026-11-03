@@ -25,6 +25,9 @@ const slashCommand = new SlashCommandBuilder()
         .setDescription('Kind of item (stickers are resized to 320x320). Default: auto-detect')
         .addChoices(...TYPES.map(t => ({ name: t, value: t })))
         .setRequired(false))
+    .addBooleanOption(o => o.setName('shared')
+        .setDescription('True = add to / open the SHARED library that all allowed users can use')
+        .setRequired(false))
     .setContexts(
         InteractionContextType.Guild,
         InteractionContextType.BotDM,
@@ -44,6 +47,10 @@ const stickerCommand = new SlashCommandBuilder()
         .setMaxLength(config.NAME_MAX_LENGTH)
         .setAutocomplete(true)
         .setRequired(true))
+    .addStringOption(o => o.setName('library')
+        .setDescription('Which library to send from (default: your own)')
+        .addChoices({ name: 'my library', value: 'personal' }, { name: 'shared library', value: 'shared' })
+        .setRequired(false))
     .setContexts(
         InteractionContextType.Guild,
         InteractionContextType.BotDM,

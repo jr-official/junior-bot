@@ -1,5 +1,6 @@
 // features/media/handlers/prefixHandler.js
 // !sticker_<name>  (also !gif_<name>, !img_<name>) → sends the author's own item.
+// !shared_<name> → sends an item from the shared library (any allowed user).
 const { AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
 const config = require('../config/mediaConfig');
 const mediaService = require('../services/mediaService');
@@ -7,7 +8,7 @@ const { isAllowed } = require('../services/accessService');
 const { MediaError } = require('../utils/errors');
 
 const PATTERN = new RegExp(
-    `^${config.PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(${config.PREFIX_ALIASES.join('|')})_([a-z0-9_-]{1,${config.NAME_MAX_LENGTH}})(?:\\s|$)`,
+    `^${config.PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(${[...config.PREFIX_ALIASES, config.SHARED_ALIAS].join('|')})_([a-z0-9_-]{1,${config.NAME_MAX_LENGTH}})(?:\\s|$)`,
     'i'
 );
 
@@ -44,12 +45,13 @@ async function handle(message) {
     lastUse.set(userId, now);
 
     const name = match[2].toLowerCase();
+    const scope = match[1].toLowerCase() === config.SHARED_ALIAS ? 'shared' : 'personal';
 
     try {
-        const item = await mediaService.findByName(userId, name);
+        const item = await mediaService.findByName(userId, name, scope);
         if (!item) {
             if (canDelete(message)) message.delete().catch(() => {});
-            return await tempNotice(message, `❌ No item named \`${name}\` in your library.`);
+            return await tempNotice(message, `❌ No item named \`${name}\` in ${scope === 'shared' ? 'the shared library' : 'your library'}.`);
         }
 
         const buffer = await mediaService.getFileBuffer(userId, item);
