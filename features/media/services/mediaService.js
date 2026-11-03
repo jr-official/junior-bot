@@ -169,6 +169,17 @@ class MediaService {
         return item;
     }
 
+    // Copies one of the caller's PERSONAL items into the shared library (the original is kept).
+    async shareItem(userId, id, newName, addedByName) {
+        const item = await this.getItem(userId, id, 'personal');   // must be the caller's own item
+        const buffer = await this.getFileBuffer(userId, item);
+        return this.addItem(userId, {
+            scope: 'shared', addedByName,
+            name: newName ?? item.name, type: item.type, buffer,
+            mime: item.mime, ext: item.ext, width: item.width, height: item.height, animated: item.animated
+        });
+    }
+
     async rename(userId, id, newName, scope = 'personal') {
         const n = normalizeName(newName);
         if (!n.ok) throw new MediaError(n.error);

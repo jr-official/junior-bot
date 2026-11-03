@@ -120,6 +120,12 @@ function itemView(item, buffer, { filter, page, content = '', viewerId }) {
             .setStyle(ButtonStyle.Danger).setDisabled(!canEdit),
         new ButtonBuilder().setCustomId(cid('back', filter, page, sc)).setLabel('⬅ Back').setStyle(ButtonStyle.Secondary)
     )];
+    if (!shared) {
+        // Personal items can be copied into the shared library.
+        components[0].addComponents(
+            new ButtonBuilder().setCustomId(cid('share', ...tail)).setLabel('🌐 Share').setStyle(ButtonStyle.Secondary)
+        );
+    }
 
     return {
         content,

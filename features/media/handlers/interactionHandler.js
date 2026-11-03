@@ -245,6 +245,25 @@ async function handleComponent(interaction) {
                 return await interaction.showModal(modal);
             }
 
+            case 'share': {
+                if (scope !== 'personal') return;
+                const item = await mediaService.getItem(userId, args[0], 'personal');
+                const modal = new ModalBuilder()
+                    .setCustomId(cid('shr', ...args))
+                    .setTitle('Share to the shared library')
+                    .addComponents(new ActionRowBuilder().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('name')
+                            .setLabel('Name in the shared library')
+                            .setStyle(TextInputStyle.Short)
+                            .setMinLength(1)
+                            .setMaxLength(config.NAME_MAX_LENGTH)
+                            .setValue(item.name)
+                            .setRequired(true)
+                    ));
+                return await interaction.showModal(modal);
+            }
+
             case 'del': {
                 await interaction.deferUpdate();
                 const item = await mediaService.getItem(userId, args[0], scope);
@@ -291,9 +310,24 @@ async function handleModal(interaction) {
     if (!isAllowed(userId)) return notify(interaction, DENIED_TEXT);
 
     const [, action, itemId, filterRaw, pageRaw, scopeRaw] = interaction.customId.split(':');
-    if (action !== 'rnm') return;
+    if (action !== 'rnm' && action !== 'shr') return;
 
     try {
+        if (action === 'shr') {
+            // Copy a personal item into the shared library (original stays in your library).
+            if (interaction.isFromMessage()) await interaction.deferUpdate();
+            else await interaction.deferReply({ flags: EPHEMERAL });
+            const shared = await mediaService.shareItem(
+                userId, itemId, interaction.fields.getTextInputValue('name'), interaction.user.username);
+            const note = `🌐 Shared as **${shared.name}** — everyone with access can send it with \`!shared_${shared.name}\`.`;
+            if (interaction.isFromMessage()) {
+                await showItem(interaction, userId, itemId, parseFilter(filterRaw), parsePage(pageRaw), 'personal', note);
+            } else {
+                await interaction.editReply({ content: note });
+            }
+            return;
+        }
+
         const filter = parseFilter(filterRaw);
         const page = parsePage(pageRaw);
         const scope = scopeFromCode(scopeRaw);
