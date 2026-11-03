@@ -11,7 +11,7 @@ const { isAllowed } = require('../services/accessService');
 const { MediaError, AccessDeniedError } = require('../utils/errors');
 const { FILTERS, TYPE_META } = require('../utils/mediaUtils');
 const { InteractionContextType } = require('discord.js');
-const { listView, itemView, confirmDeleteView, cid, scopeFromCode } = require('../ui/libraryView');
+const { listView, publicSharedView, itemView, confirmDeleteView, cid, scopeFromCode } = require('../ui/libraryView');
 
 const EPHEMERAL = MessageFlags.Ephemeral;
 const DENIED_TEXT = '❌ This feature isn\'t available to you.';
@@ -122,6 +122,27 @@ async function handleSlash(interaction) {
     }
 }
 
+// ── public shared-library menu (/shared and !shared) ──────────────────────────
+async function buildPublicSharedMenu(userId) {
+    const [res, usage] = await Promise.all([
+        mediaService.list(userId, { type: 'all', page: 0, scope: 'shared' }),
+        mediaService.getUsage(userId, 'shared')
+    ]);
+    return publicSharedView({ items: res.items, total: res.total, usage });
+}
+
+async function handleSharedMenu(interaction) {
+    const userId = interaction.user.id;
+    if (!isAllowed(userId)) {
+        return interaction.reply({ content: DENIED_TEXT, flags: EPHEMERAL });
+    }
+    try {
+        await interaction.reply(await buildPublicSharedMenu(userId));   // public message
+    } catch (err) {
+        await handleError(interaction, err, {});
+    }
+}
+
 // ── /sticker <name> (slash equivalent of !sticker_<name>; works in friend DMs) ──
 async function handleSticker(interaction) {
     const userId = interaction.user.id;
@@ -198,6 +219,15 @@ async function handleComponent(interaction) {
             case 'scope':
                 await interaction.deferUpdate();
                 return await showList(interaction, userId, 'all', 0, scope);
+
+            // From the PUBLIC menu: always answer privately so the shared message never changes.
+            case 'pubpick':
+                await interaction.deferReply({ flags: EPHEMERAL });
+                return await showItem(interaction, userId, interaction.values?.[0], 'all', 0, 'shared');
+
+            case 'pubopen':
+                await interaction.deferReply({ flags: EPHEMERAL });
+                return await showList(interaction, userId, 'all', 0, 'shared');
 
             case 'filter':
                 await interaction.deferUpdate();
@@ -373,4 +403,4 @@ async function handleError(interaction, err, { editInstead = false, refreshList 
     await notify(interaction, '❌ Something went wrong. Please try again.');
 }
 
-module.exports = { handleSlash, handleSticker, handleAutocomplete, handleComponent, handleModal };
+module.exports = { handleSlash, handleSticker, handleSharedMenu, buildPublicSharedMenu, handleAutocomplete, handleComponent, handleModal };

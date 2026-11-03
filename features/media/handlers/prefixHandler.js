@@ -6,11 +6,19 @@ const config = require('../config/mediaConfig');
 const mediaService = require('../services/mediaService');
 const { isAllowed } = require('../services/accessService');
 const { MediaError } = require('../utils/errors');
+const interactionHandler = require('./interactionHandler');
+
+// Set MEDIA_DEBUG=1 in Railway to log why a prefix command was (not) handled.
+const DEBUG = process.env.MEDIA_DEBUG === '1';
+const dbg = (...a) => { if (DEBUG) console.log('[media:debug]', ...a); };
 
 const PATTERN = new RegExp(
     `^${config.PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(${[...config.PREFIX_ALIASES, config.SHARED_ALIAS].join('|')})_([a-z0-9_-]{1,${config.NAME_MAX_LENGTH}})(?:\\s|$)`,
     'i'
 );
+
+// `!shared` on its own (not `!shared_<name>`) posts the public shared-library menu.
+const MENU_PATTERN = new RegExp(`^${config.PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${config.SHARED_ALIAS}(?:\\s|$)`, 'i');
 
 const lastUse = new Map();   // userId → timestamp (simple anti-flood)
 
@@ -32,17 +40,34 @@ async function handle(message) {
     if (message.author.bot) return;
     if (!message.content || !message.content.startsWith(config.PREFIX)) return;
 
-    const match = message.content.match(PATTERN);
-    if (!match) return;
+    const isMenu = MENU_PATTERN.test(message.content);
+    const match = isMenu ? null : message.content.match(PATTERN);
+    if (!isMenu && !match) return;
+
+    const where = message.guild ? `guild ${message.guild.id}` : 'DM';
+    dbg(`received "${message.content.slice(0, 40)}" from ${message.author.id} in ${where}`);
 
     // Unauthorized users are ignored completely (no reply, no delete) so the
     // feature stays invisible to them.
     const userId = message.author.id;
-    if (!isAllowed(userId)) return;
+    if (!isAllowed(userId)) { dbg(`ignored: ${userId} is not in MEDIA_ALLOWED_USER_IDS`); return; }
 
     const now = Date.now();
-    if (now - (lastUse.get(userId) || 0) < config.PREFIX_COOLDOWN_MS) return;
+    if (now - (lastUse.get(userId) || 0) < config.PREFIX_COOLDOWN_MS) { dbg('ignored: cooldown'); return; }
     lastUse.set(userId, now);
+
+    if (isMenu) {
+        try {
+            const menu = await interactionHandler.buildPublicSharedMenu(userId);
+            const deletion = canDelete(message) ? message.delete().catch(() => {}) : Promise.resolve();
+            await Promise.all([deletion, message.channel.send(menu)]);
+            dbg('posted public shared menu');
+        } catch (err) {
+            console.error('❌ [media] Shared menu error:', err);
+            message.react?.('❌').catch(() => {});
+        }
+        return;
+    }
 
     const name = match[2].toLowerCase();
     const scope = match[1].toLowerCase() === config.SHARED_ALIAS ? 'shared' : 'personal';
@@ -66,6 +91,7 @@ async function handle(message) {
 
         const deletion = canDelete(message) ? message.delete().catch(() => {}) : Promise.resolve();
         await Promise.all([deletion, message.channel.send(payload)]);
+        dbg(`sent ${scope}:${item.name}`);
     } catch (err) {
         if (err instanceof MediaError) return tempNotice(message, `❌ ${err.userMessage}`);
         console.error('❌ [media] Prefix command error:', err);

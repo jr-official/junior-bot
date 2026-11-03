@@ -58,6 +58,16 @@ const stickerCommand = new SlashCommandBuilder()
     )
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall);
 
+const sharedCommand = new SlashCommandBuilder()
+    .setName('shared')
+    .setDescription('Post the shared library menu in this chat so everyone can see it')
+    .setContexts(
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+    )
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall);
+
 module.exports = (client) => {
     if (config.INVALID_USER_IDS.length) {
         console.warn('⚠️  [media] Ignoring invalid MEDIA_ALLOWED_USER_IDS entries:', config.INVALID_USER_IDS.join(', '));
@@ -70,7 +80,7 @@ module.exports = (client) => {
     // Slash commands are registered together by the moderation feature (a single
     // commands.set() call replaces ALL global commands, so they must share one list).
     // Media must therefore be initialised BEFORE moderation in main.js.
-    (client.extraSlashCommands ||= []).push(slashCommand, stickerCommand);
+    (client.extraSlashCommands ||= []).push(slashCommand, stickerCommand, sharedCommand);
 
     client.once(Events.ClientReady, async () => {
         try {
@@ -89,6 +99,7 @@ module.exports = (client) => {
             if (interaction.isChatInputCommand()) {
                 if (interaction.commandName === 'media') await interactionHandler.handleSlash(interaction);
                 else if (interaction.commandName === 'sticker') await interactionHandler.handleSticker(interaction);
+                else if (interaction.commandName === 'shared') await interactionHandler.handleSharedMenu(interaction);
                 return;
             }
             const id = interaction.customId;
